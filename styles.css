@@ -61,6 +61,12 @@ input{font-family:inherit;}
 /* focus ring */
 .focusable:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
 
+/* Sidebar class-row inline actions: hidden at rest, revealed on hover/focus. */
+.class-row .row-action{opacity:0;transition:opacity .12s, background .12s, color .12s;}
+.class-row:hover .row-action,
+.class-row:focus-within .row-action{opacity:1;}
+.class-row .row-action:hover{color:var(--ink);background:var(--line);}
+
 /* ---- buttons ---- */
 .btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-ui);font-weight:600;
   font-size:14px;line-height:1;padding:10px 15px;border-radius:var(--r-md);

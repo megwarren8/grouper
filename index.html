@@ -292,8 +292,9 @@ function Chip({ tone = 'plain', children, style }){
 const { useState, useRef, useEffect } = React;
 
 /* ---------------- Sidebar: classes ---------------- */
-function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, collapsed }){
+function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, onDeleteClass, collapsed }){
   if (collapsed) return null;
+  const canDelete = classes.length > 1;
   return (
     <aside style={{ width:212, flex:'0 0 212px', borderRight:'1px solid var(--line)',
       background:'var(--surface-2)', display:'flex', flexDirection:'column', padding:'16px 12px' }}>
@@ -310,18 +311,38 @@ function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, colla
         {classes.map(c => {
           const act = c.id === activeId;
           return (
-            <button key={c.id} className="focusable" onClick={() => onSelect(c.id)}
+            <div key={c.id} className="focusable class-row"
+              role="button" tabIndex={0}
+              onClick={() => onSelect(c.id)}
               onDoubleClick={() => onRenameClass(c.id)}
-              style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8,
-                padding:'10px 11px', borderRadius:10, textAlign:'left', width:'100%',
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(c.id); } }}
+              style={{ display:'flex', alignItems:'center', gap:6,
+                padding:'10px 11px', borderRadius:10, cursor:'pointer',
                 background: act ? 'var(--surface)' : 'transparent',
                 border:'1px solid ' + (act ? 'var(--line-2)' : 'transparent'),
                 boxShadow: act ? 'var(--shadow-sm)' : 'none', transition:'.12s' }}>
-              <span style={{ fontSize:13.5, fontWeight: act ? 600 : 500, color: act ? 'var(--ink)' : 'var(--ink-2)',
+              <span style={{ flex:1, minWidth:0, fontSize:13.5, fontWeight: act ? 600 : 500,
+                color: act ? 'var(--ink)' : 'var(--ink-2)',
                 overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
+              <button className="row-action focusable"
+                onClick={(e) => { e.stopPropagation(); onRenameClass(c.id); }}
+                aria-label={"Rename " + c.name} title="Rename"
+                style={{ padding:4, borderRadius:6, background:'transparent', border:'none',
+                  cursor:'pointer', color:'var(--muted)', display:'flex', alignItems:'center' }}>
+                <Icon name="edit" size={13} />
+              </button>
+              {canDelete && (
+                <button className="row-action focusable"
+                  onClick={(e) => { e.stopPropagation(); onDeleteClass(c.id); }}
+                  aria-label={"Delete " + c.name} title="Delete"
+                  style={{ padding:4, borderRadius:6, background:'transparent', border:'none',
+                    cursor:'pointer', color:'var(--muted)', display:'flex', alignItems:'center' }}>
+                  <Icon name="trash" size={13} />
+                </button>
+              )}
               <span style={{ fontFamily:'var(--font-display)', fontSize:11.5, fontWeight:600,
-                color:'var(--muted)' }}>{c.students.length}</span>
-            </button>
+                color:'var(--muted)', minWidth:16, textAlign:'right' }}>{c.students.length}</span>
+            </div>
           );
         })}
       </div>
@@ -791,6 +812,27 @@ function RenameModal({ initial, onSave, onClose }){
   );
 }
 
+function DeleteClassModal({ cls, onConfirm, onClose }){
+  const n = cls.students.length;
+  return (
+    <Modal title="Delete this class?" sub={"“" + cls.name + "” will be permanently removed."}
+      onClose={onClose} width={420}
+      footer={<>
+        <button className="btn focusable" onClick={onClose}>Cancel</button>
+        <button className="btn focusable" onClick={onConfirm}
+          style={{ background:'var(--warn)', borderColor:'var(--warn)', color:'#fff' }}>
+          <Icon name="trash" size={14} /> Delete class
+        </button>
+      </>}>
+      <p style={{ fontSize:13.5, color:'var(--ink-2)', margin:0, lineHeight:1.55 }}>
+        {n === 0
+          ? "There are no students in this roster, so nothing else is lost."
+          : "The " + n + " " + (n === 1 ? "student" : "students") + " in this roster will be removed too. If you want to keep the roster and just change the name, use Rename instead."}
+      </p>
+    </Modal>
+  );
+}
+
 function RulesModal({ cls, onChange, onClose }){
   const [a1, setA1] = useStateM(''); const [a2, setA2] = useStateM('');
   const [t1, setT1] = useStateM(''); const [t2, setT2] = useStateM('');
@@ -1204,7 +1246,8 @@ function App(){
       {!mobile && (
         <Sidebar classes={classes} activeId={activeId} onSelect={setActiveId}
           onAddClass={() => setModal({ type:'add' })}
-          onRenameClass={(id) => setModal({ type:'rename', id })} />
+          onRenameClass={(id) => setModal({ type:'rename', id })}
+          onDeleteClass={(id) => setModal({ type:'delete', id })} />
       )}
 
       <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0 }}>
@@ -1271,6 +1314,17 @@ function App(){
       {modal && modal.type === 'rename' && (
         <RenameModal initial={(classes.find(c => c.id === modal.id) || {}).name || ''} onClose={() => setModal(null)}
           onSave={(name) => { setClasses(cs => cs.map(c => c.id === modal.id ? { ...c, name } : c)); setModal(null); }} />
+      )}
+      {modal && modal.type === 'delete' && classes.find(c => c.id === modal.id) && (
+        <DeleteClassModal cls={classes.find(c => c.id === modal.id)}
+          onClose={() => setModal(null)}
+          onConfirm={() => {
+            const remaining = classes.filter(c => c.id !== modal.id);
+            if (remaining.length === 0) { setModal(null); return; } // safety, sidebar hides button in this case
+            setClasses(remaining);
+            if (activeId === modal.id) setActiveId(remaining[0].id);
+            setModal(null);
+          }} />
       )}
       {modal && modal.type === 'rules' && (
         <RulesModal cls={cls} onClose={() => setModal(null)}
