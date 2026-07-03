@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Grouper - Random Student Generator</title>
+<meta name="description" content="A fast, fair classroom group generator: smart no-repeat memory, drag-to-adjust, roles, a built-in timer, and a one-tap projector view." />
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<meta name="theme-color" content="#2E1F4A" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React + Babel bundled locally in vendor/ so this works fully offline (no internet ever needed). -->
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+<script src="vendor/babel.min.js"></script>
+
+<!--
+  The whole app, compiled in the browser by Babel.
+  Sections, in dependency order:
+    1. ENGINE      - data, colors, storage, and the grouping algorithm
+    2. COMPONENTS  - shared UI atoms (icons, avatar, toggle, chip)
+    3. WORK        - sidebar, toolbar, stepper, timer
+    4. WORK (grid) - roster, group cards (drag & drop), insight bar
+    5. STAGE       - Present mode (projector view)
+    6. MODALS      - roster / class / rules / roles / export dialogs
+    7. APP         - orchestrator: state, generation, drag, timer, present mode
+-->
+<script type="text/babel">
+// engine.js - data, storage, and the group-generation algorithm. Plain JS → window.
+
+// ---- group colors (oklch, harmonious; 12 hues, configurable via setGroupCfg) ----
+const GROUP_HUES = [192, 300, 330, 25, 122, 262, 55, 210, 152, 282, 92, 352];
+let GCFG = { chroma: 0.145, mono: false };
+const setGroupCfg = (cfg) => { GCFG = { ...GCFG, ...cfg }; };
+const NH = GROUP_HUES.length;
+const groupColor = (i) => GCFG.mono ? `oklch(${0.60 + (i % 4) * 0.075} 0 0)` : `oklch(0.70 ${GCFG.chroma} ${GROUP_HUES[i % NH]})`;
+const groupSoft  = (i) => GCFG.mono ? `oklch(0.93 0 0)` : `oklch(0.95 ${GCFG.chroma * 0.32} ${GROUP_HUES[i % NH]})`;
+const groupInk   = (i) => GCFG.mono ? `oklch(0.40 0 0)` : `oklch(0.45 ${GCFG.chroma} ${GROUP_HUES[i % NH]})`;
+const groupGlow  = (i) => GCFG.mono ? `oklch(${0.62 + (i % 4) * 0.075} 0 0)` : `oklch(0.66 ${GCFG.chroma * 1.1} ${GROUP_HUES[i % NH]})`;
+
+const ROLES = ['Lead', 'Recorder', 'Reporter', 'Materials', 'Timekeeper'];
+
+let _id = 1;
+const uid = () => 's' + (_id++);
+const mkStudents = (names) => names.map(n => ({ id: uid(), name: n, present: true, level: 1 + Math.floor(Math.random() * 3) }));
+
+// Period 3 - the user's real roster from the spreadsheet.
+const P3 = ['Kyle','Matthew','Sammie','Simone','Leila','Zoey','Ty','Kate','Grace',
+            'Cooper','El','Aaron','Cesi','Niko','Phoebe','Catherine','Lauren','Diego','Mara'];
+const POOL_A = ['Ava','Liam','Noah','Emma','Olivia','Mason','Sophia','Ethan','Isabella','Lucas',
+                'Mia','Amir','Chloe','Jaden','Harper','Owen','Layla','Wyatt','Nora','Eli',
+                'Ruby','Theo','Iris','Malik','Stella','June','Hugo','Priya','Dax','Yusuf','Greta'];
+const POOL_B = ['Quinn','Reza','Tess','Marco','Indra','Sol','Bex','Cyrus','Wren','Otto',
+                'Hana','Beau','Vera','Kofi','Lena','Rafa','Suki','Milo','Dara','Pax',
+                'Esme','Nik','Talia','Oren'];
+
+function seedHistory(students, sessions){
+  let h = {};
+  for (let s = 0; s < sessions; s++){
+    const g = generateGroups(students, { mode:'size', value:3 + (s % 2), avoidRecent:true, history:h });
+    h = commitHistory(g, h);
+  }
+  return h;
+}
+
+function defaultClasses(){
+  const cs = [
+    { id:'c1', name:'Period 1 · Biology',   students: mkStudents(POOL_A.slice(0,28)) },
+    { id:'c2', name:'Period 3 · Biology',   students: mkStudents(P3) },
+    { id:'c3', name:'Period 4 · Chemistry', students: mkStudents(POOL_B) },
+    { id:'c4', name:'Period 6 · AP Bio',    students: mkStudents(POOL_A.slice(8,27)) },
+  ];
+  for (const c of cs){
+    c.history = seedHistory(c.students, 3 + Math.floor(Math.random() * 3));
+    c.keepApart = []; c.keepTogether = [];
+    c.roleNames = [...ROLES];
+    c.pinned = {};
+  }
+  // a couple of sample rules on Period 3 so the feature is visible
+  const p3 = cs[1].students;
+  cs[1].keepApart = [[p3[9].id, p3[13].id]]; // Cooper ✕ Niko
+  cs[1].keepTogether = [[p3[4].id, p3[8].id]]; // Leila + Grace
+  return cs;
+}
+
+// ---- pairing-history helpers ----
+const pairKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+
+// ---- the generator ----
+// opts: { mode:'count'|'size', value, avoidRecent, balance, history:{pairKey:count}, keepApart:[[a,b]], keepTogether:[[a,b]] }
+function generateGroups(students, opts){
+  const present = students.filter(s => s.present);
+  const n = present.length;
+  if (n === 0) return [];
+
+  let G;
+  if (opts.mode === 'count') G = Math.max(1, Math.min(opts.value, n));
+  else G = Math.max(1, Math.ceil(n / Math.max(1, opts.value)));
+
+  // target capacities, as even as possible
+  const base = Math.floor(n / G), extra = n % G;
+  const caps = Array.from({ length: G }, (_, i) => base + (i < extra ? 1 : 0));
+
+  const history = opts.history || {};
+  const apart = new Set((opts.keepApart || []).map(([a, b]) => pairKey(a, b)));
+  const together = opts.keepTogether || [];
+
+  // cost of placing student into a group's current members
+  const cost = (sid, members) => {
+    let c = 0;
+    for (const m of members){
+      const k = pairKey(sid, m.id);
+      if (apart.has(k)) c += 1000;                 // hard-ish constraint
+      if (opts.avoidRecent) c += (history[k] || 0) * 10; // penalise repeats
+    }
+    if (opts.balance && members.length){
+      const avg = members.reduce((a, m) => a + m.level, 0) / members.length;
+      c += Math.abs(avg - 2) * 0.5; // nudge toward mixed levels
+    }
+    return c;
+  };
+
+  // shuffle order
+  const order = [...present];
+  for (let i = order.length - 1; i > 0; i--){ const j = (Math.random() * (i + 1)) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+
+  const groups = Array.from({ length: G }, () => []);
+  const placed = new Set();
+
+  // 0) pinned seed - keep frozen students in their group slot
+  const seed = opts.pinnedSeed || [];
+  for (let i = 0; i < G; i++){
+    for (const s of (seed[i] || [])){
+      if (placed.has(s.id) || !present.some(p => p.id === s.id)) continue;
+      if (groups[i].length < caps[i]){ groups[i].push(s); placed.add(s.id); }
+    }
+  }
+
+  // seed keep-together pairs next
+  for (const [a, b] of together){
+    const sa = present.find(s => s.id === a), sb = present.find(s => s.id === b);
+    if (!sa || !sb || placed.has(a) || placed.has(b)) continue;
+    const gi = groups.findIndex((g, i) => g.length + 2 <= caps[i]);
+    if (gi >= 0){ groups[gi].push(sa, sb); placed.add(a); placed.add(b); }
+  }
+
+  for (const s of order){
+    if (placed.has(s.id)) continue;
+    // candidate groups with capacity
+    let best = -1, bestCost = Infinity;
+    for (let i = 0; i < G; i++){
+      if (groups[i].length >= caps[i]) continue;
+      const c = cost(s.id, groups[i]) + groups[i].length * 0.01 + Math.random() * 0.4;
+      if (c < bestCost){ bestCost = c; best = i; }
+    }
+    if (best < 0){ // overflow safety
+      best = groups.reduce((mi, g, i, arr) => g.length < arr[mi].length ? i : mi, 0);
+    }
+    groups[best].push(s);
+    placed.add(s.id);
+  }
+
+  return groups;
+}
+
+// freshness: % of pairs in the group that have never been grouped before
+function groupFreshness(group, history){
+  let total = 0, fresh = 0;
+  for (let i = 0; i < group.length; i++)
+    for (let j = i + 1; j < group.length; j++){
+      total++;
+      if (!(history[pairKey(group[i].id, group[j].id)])) fresh++;
+    }
+  return total === 0 ? 100 : Math.round((fresh / total) * 100);
+}
+
+// commit a generated arrangement into history (increment pair counts)
+function commitHistory(groups, history){
+  const h = { ...history };
+  for (const g of groups)
+    for (let i = 0; i < g.length; i++)
+      for (let j = i + 1; j < g.length; j++){
+        const k = pairKey(g[i].id, g[j].id);
+        h[k] = (h[k] || 0) + 1;
+      }
+  return h;
+}
+
+function termStats(history, students){
+  const vals = Object.values(history);
+  const sessions = vals.length ? Math.max(...vals, 0) : 0;
+  const n = students.length;
+  const totalPairs = n * (n - 1) / 2;
+  const metPairs = Object.keys(history).length;
+  const unique = totalPairs ? Math.round((metPairs / totalPairs) * 100) : 0;
+  const never = Math.max(0, totalPairs - metPairs);
+  return { sessions: vals.length ? vals.reduce((a, b) => Math.max(a, b), 0) : 0, unique, never };
+}
+
+// ---- persistence ----
+const SKEY = 'rgg.v3';
+function loadState(){
+  try{ const raw = localStorage.getItem(SKEY); if (raw) return JSON.parse(raw); }catch(e){}
+  return null;
+}
+function saveState(state){
+  try{ localStorage.setItem(SKEY, JSON.stringify(state)); }catch(e){}
+}
+
+// components.jsx - shared UI atoms (icons, avatar, toggle, chip). → window.
+
+const I = {
+  plus:'M12 5v14M5 12h14',
+  minus:'M5 12h14',
+  check:'M4 12.5l5 5L20 6',
+  x:'M6 6l12 12M18 6L6 18',
+  chevDown:'M6 9l6 6 6-6',
+  chevRight:'M9 6l6 6-6 6',
+  play:'M7 5l12 7-12 7z',
+  pause:'M8 5v14M16 5v14',
+  clock:'M12 7v5l3 2',
+  shuffle:'M3 6h4l10 12h4M3 18h4l3.5-4.2M21 6h-4l-3.5 4.2M18 3l3 3-3 3M18 15l3 3-3 3',
+  grip:'M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01',
+  users:'M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M21 19v-1a4 4 0 0 0-3-3.8M16 4.2a3 3 0 0 1 0 5.6',
+  sparkle:'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
+  gear:'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L16.2 3h-4l-.4 2.5a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1c.6.5 1.3.9 2 1.2l.4 2.5h4l.4-2.5c.7-.3 1.4-.7 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z',
+  present:'M3 4h18v12H3zM8 20h8M12 16v4',
+  undo:'M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10h-3',
+  trash:'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14',
+  search:'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16M21 21l-4.3-4.3',
+  pin:'M12 2l2.4 6.8L21 9l-5 4.2L17.5 21 12 17l-5.5 4 1.5-7.8L3 9l6.6-.2z',
+  edit:'M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z',
+  plusBig:'M12 4v16M4 12h16',
+  flame:'M12 22a7 7 0 0 0 7-7c0-3-2-5-3.5-7.5C14 5 14 3 12 2c0 3-2 4.5-3.5 6.5S5 12 5 15a7 7 0 0 0 7 7z',
+  download:'M12 3v11M8 10.5l4 4 4-4M5 20h14',
+  copy:'M9 9h10v10H9zM5 15V5h10',
+  printer:'M7 8V3h10v5M7 16H5a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v7H7z',
+};
+
+function Icon({ name, size = 18, stroke = 2, fill = false, style }){
+  const filled = fill || ['play','sparkle','pin','flame'].includes(name) && fill;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={name === 'play' ? 'currentColor' : 'none'}
+      stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"
+      style={{ display:'block', flex:'0 0 auto', ...style }}>
+      {name === 'clock' && <circle cx="12" cy="12" r="9" />}
+      <path d={I[name]} />
+    </svg>
+  );
+}
+
+// pseudo-avatar disc - grey until it "lands" in a group, then the group color
+function Avatar({ name, size = 26, color, landed, ring, solid, style }){
+  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const grouped = color && landed;
+  const bg = solid || (grouped ? color : 'var(--fill)');
+  const fg = grouped ? '#fff' : 'var(--muted)';
+  return (
+    <div style={{
+      width:size, height:size, borderRadius:'50%', flex:'0 0 auto',
+      background: bg, color: fg,
+      display:'flex', alignItems:'center', justifyContent:'center',
+      fontFamily:'var(--font-ui)', fontWeight:700, fontSize:size * 0.4,
+      boxShadow: ring ? `0 0 0 2px ${ring}` : 'none',
+      transition:'background .45s ease, color .45s ease, box-shadow .45s ease',
+      ...style,
+    }}>{initials}</div>
+  );
+}
+
+function Toggle({ on, onClick }){
+  return <div className={'tg' + (on ? ' on' : '')} onClick={onClick}><div className="knob" /></div>;
+}
+
+function Chip({ tone = 'plain', children, style }){
+  const tones = {
+    plain:['var(--surface-2)','var(--muted)','var(--line-2)'],
+    primary:['var(--primary-soft)','var(--primary)','transparent'],
+    good:['var(--good-soft)','var(--good)','transparent'],
+    warn:['var(--warn-soft)','var(--warn)','transparent'],
+  };
+  const [bg, fg, bd] = tones[tone];
+  return <span className="chip" style={{ background:bg, color:fg, border:`1px solid ${bd}`, ...style }}>{children}</span>;
+}
+
+// work.jsx - Work-view presentational components. → window.
+const { useState, useRef, useEffect } = React;
+
+/* ---------------- Sidebar: classes ---------------- */
+function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, collapsed }){
+  if (collapsed) return null;
+  return (
+    <aside style={{ width:212, flex:'0 0 212px', borderRight:'1px solid var(--line)',
+      background:'var(--surface-2)', display:'flex', flexDirection:'column', padding:'16px 12px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'2px 6px 16px' }}>
+        <div style={{ width:24, height:24, borderRadius:7, background:'var(--ink)', color:'#fff',
+          display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <Icon name="users" size={14} stroke={2.2} />
+        </div>
+        <span style={{ fontFamily:'var(--font-display)', fontWeight:700, fontSize:16, letterSpacing:'-.01em' }}>Grouper</span>
+      </div>
+      <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.08em', textTransform:'uppercase',
+        color:'var(--muted)', padding:'0 6px 8px' }}>Classes</div>
+      <div className="scroll" style={{ display:'flex', flexDirection:'column', gap:2, flex:1, minHeight:0 }}>
+        {classes.map(c => {
+          const act = c.id === activeId;
+          return (
+            <button key={c.id} className="focusable" onClick={() => onSelect(c.id)}
+              onDoubleClick={() => onRenameClass(c.id)}
+              style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8,
+                padding:'10px 11px', borderRadius:10, textAlign:'left', width:'100%',
+                background: act ? 'var(--surface)' : 'transparent',
+                border:'1px solid ' + (act ? 'var(--line-2)' : 'transparent'),
+                boxShadow: act ? 'var(--shadow-sm)' : 'none', transition:'.12s' }}>
+              <span style={{ fontSize:13.5, fontWeight: act ? 600 : 500, color: act ? 'var(--ink)' : 'var(--ink-2)',
+                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
+              <span style={{ fontFamily:'var(--font-display)', fontSize:11.5, fontWeight:600,
+                color:'var(--muted)' }}>{c.students.length}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button className="btn ghost sm focusable" onClick={onAddClass}
+        style={{ color:'var(--primary)', justifyContent:'flex-start', marginTop:6 }}>
+        <Icon name="plus" size={15} /> Add class
+      </button>
+    </aside>
+  );
+}
+
+/* ---------------- Stepper ---------------- */
+function Stepper({ value, onChange, min = 1, max = 20 }){
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+      <button className="btn icon focusable" onClick={() => onChange(Math.max(min, value - 1))}
+        style={{ width:32, height:32, justifyContent:'center' }}><Icon name="minus" size={15} /></button>
+      <div style={{ width:42, height:34, borderRadius:9, border:'1.5px solid var(--ink)',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        fontFamily:'var(--font-display)', fontWeight:700, fontSize:17 }}>{value}</div>
+      <button className="btn icon focusable" onClick={() => onChange(Math.min(max, value + 1))}
+        style={{ width:32, height:32, justifyContent:'center' }}><Icon name="plus" size={15} /></button>
+    </div>
+  );
+}
+
+/* ---------------- Timer ---------------- */
+function fmt(s){ const m = Math.floor(s / 60), ss = s % 60; return m + ':' + String(ss).padStart(2, '0'); }
+function TimerPill({ timer, onToggle, onAdd, onReset, big }){
+  const low = timer.seconds <= 30 && timer.seconds > 0;
+  const done = timer.seconds === 0;
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 6px 5px 12px',
+      borderRadius:11, border:'1px solid ' + (done ? 'var(--warn)' : 'var(--line-2)'),
+      background: done ? 'var(--warn-soft)' : 'var(--surface)' }}>
+      <Icon name="clock" size={15} style={{ color:'var(--muted)' }} />
+      <span style={{ fontFamily:'var(--font-display)', fontWeight:700, fontSize:15, minWidth:42,
+        color: low || done ? 'var(--warn)' : 'var(--ink)' }}>{fmt(timer.seconds)}</span>
+      <button className="btn icon sm focusable" onClick={onToggle} title={timer.running ? 'Pause' : 'Start'}
+        style={{ width:28, height:28, justifyContent:'center', border:'none', background:'var(--surface-2)' }}>
+        <Icon name={timer.running ? 'pause' : 'play'} size={13} />
+      </button>
+      <button className="btn icon sm focusable" onClick={onAdd} title="+1 min"
+        style={{ width:'auto', padding:'0 8px', height:28, fontSize:12, justifyContent:'center', border:'none', background:'var(--surface-2)' }}>+1</button>
+    </div>
+  );
+}
+
+/* ---------------- Toolbar ---------------- */
+function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, timer, timerCtl,
+                   onRules, onEditRoles, presentN, totalN, shuffling, onRename,
+                   mobile, classes, activeId, onSelectClass }){
+  return (
+    <>
+      <header style={{ height:60, flex:'0 0 60px', borderBottom:'1px solid var(--line)',
+        display:'flex', alignItems:'center', gap:12, padding:'0 18px', background:'var(--surface)' }}>
+        <div style={{ flexShrink:0 }}>
+          {mobile ? (
+            <select value={activeId} onChange={(e) => onSelectClass(e.target.value)}
+              style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:700, letterSpacing:'-.01em',
+                border:'none', background:'transparent', color:'var(--ink)', padding:'0 18px 0 0', maxWidth:'46vw',
+                appearance:'none', WebkitAppearance:'none', cursor:'pointer',
+                backgroundImage:'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 fill=%27none%27 stroke=%27%238d8576%27 stroke-width=%272.5%27><path d=%27M3 4.5l3 3 3-3%27/></svg>")',
+                backgroundRepeat:'no-repeat', backgroundPosition:'right center' }}>
+              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          ) : (
+            <div onDoubleClick={onRename} title="Double-click to rename"
+              style={{ fontFamily:'var(--font-display)', fontSize:17, fontWeight:700, letterSpacing:'-.01em', whiteSpace:'nowrap' }}>{cls.name}</div>
+          )}
+          <div style={{ fontSize:11.5, color:'var(--muted)', fontWeight:500 }}>
+            {presentN} present · {totalN - presentN} out</div>
+        </div>
+        <div style={{ flex:1 }} />
+        <TimerPill timer={timer} onToggle={timerCtl.toggle} onAdd={timerCtl.add} onReset={timerCtl.reset} />
+        <div style={{ display:'flex', alignItems:'center', gap:0, borderRadius:'var(--r-md)',
+          border:'1px solid ' + (config.roles ? 'var(--primary)' : 'var(--line-2)'),
+          background: config.roles ? 'var(--primary-soft)' : 'var(--surface)',
+          color: config.roles ? 'var(--primary)' : 'var(--ink)', overflow:'hidden' }}>
+          <button className="focusable" onClick={() => setConfig({ ...config, roles: !config.roles })}
+            style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', fontWeight:600, fontSize:14, color:'inherit' }}>
+            <Icon name="sparkle" size={15} /> Roles <Toggle on={config.roles} />
+          </button>
+          <button className="focusable" onClick={onEditRoles} title="Edit role names"
+            style={{ display:'flex', padding:'10px 9px', color:'inherit', borderLeft:'1px solid ' + (config.roles ? 'var(--primary)' : 'var(--line-2)'), opacity:.8 }}>
+            <Icon name="gear" size={15} />
+          </button>
+        </div>
+        <button className="btn focusable" onClick={onGenerate}>
+          <Icon name="shuffle" size={15} style={shuffling ? { animation:'spin .6s ease' } : null} /> Generate
+        </button>
+        <button className="btn focusable" onClick={onExport} title="Export groups">
+          <Icon name="download" size={15} /> {mobile ? '' : 'Export'}
+        </button>
+        <button className="btn dark focusable" onClick={onPresent}>
+          <Icon name="present" size={15} /> Present
+        </button>
+      </header>
+
+      <div style={{ display:'flex', alignItems:'center', gap:14, padding:'11px 18px', flexWrap:'wrap',
+        borderBottom:'1px solid var(--line)', background:'var(--surface-2)' }}>
+        <div className="seg">
+          <button className={config.mode === 'count' ? 'act' : ''} onClick={() => setConfig({ ...config, mode:'count' })}># of groups</button>
+          <button className={config.mode === 'size' ? 'act' : ''} onClick={() => setConfig({ ...config, mode:'size' })}>group size</button>
+        </div>
+        <Stepper value={config.value} onChange={(v) => setConfig({ ...config, value:v })} />
+        <button className="chip focusable" onClick={() => setConfig({ ...config, avoidRecent: !config.avoidRecent })}
+          style={{ cursor:'pointer', padding:'6px 8px 6px 11px',
+            background: config.avoidRecent ? 'var(--primary-soft)' : 'var(--surface)',
+            border:'1px solid ' + (config.avoidRecent ? 'var(--primary)' : 'var(--line-2)'),
+            color: config.avoidRecent ? 'var(--primary)' : 'var(--muted)' }}>
+          <Icon name="shuffle" size={14} /> Avoid recent partners <Toggle on={config.avoidRecent} />
+        </button>
+        <button className="chip focusable" onClick={() => setConfig({ ...config, balance: !config.balance })}
+          style={{ cursor:'pointer', padding:'7px 11px',
+            background: config.balance ? 'var(--good-soft)' : 'var(--surface)',
+            border:'1px solid ' + (config.balance ? 'var(--good)' : 'var(--line-2)'),
+            color: config.balance ? 'var(--good)' : 'var(--muted)' }}>
+          Balance levels
+        </button>
+        <button className="chip focusable" onClick={onRules}
+          style={{ cursor:'pointer', padding:'7px 11px', background:'var(--surface)',
+            border:'1px solid var(--line-2)', color: (cls.keepApart?.length || cls.keepTogether?.length) ? 'var(--ink)' : 'var(--muted)' }}>
+          <Icon name="pin" size={13} /> Rules{(cls.keepApart?.length || cls.keepTogether?.length) ? ` · ${(cls.keepApart?.length||0)+(cls.keepTogether?.length||0)}` : ''}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// work2.jsx - Roster panel, Groups grid (drag & drop), Insight bar. → window.
+
+/* ---------------- Roster ---------------- */
+function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEnd, onDropRoster, rosterHot, setRosterHot, mobile }){
+  const present = students.filter(s => s.present);
+  const absent = students.filter(s => !s.present);
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setRosterHot(true); }}
+      onDragLeave={() => setRosterHot(false)}
+      onDrop={(e) => { e.preventDefault(); setRosterHot(false); onDropRoster(); }}
+      style={{ width: mobile ? '100%' : 268, flex: mobile ? '1 1 auto' : '0 0 268px',
+        borderRight: mobile ? 'none' : '1px solid var(--line)',
+        display:'flex', flexDirection:'column', background: rosterHot ? 'var(--warn-soft)' : 'var(--surface)',
+        transition:'background .15s' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 14px 10px' }}>
+        <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.07em', textTransform:'uppercase', color:'var(--muted)' }}>
+          Roster · tap to toggle</div>
+        <button className="btn ghost sm focusable" onClick={onEdit} style={{ color:'var(--primary)', padding:'4px 7px' }}>
+          <Icon name="edit" size={14} /> Edit
+        </button>
+      </div>
+      <div className="scroll" style={{ flex:1, minHeight:0, padding:'0 10px 12px', display:'flex', flexDirection:'column', gap:2 }}>
+        {present.map(s => (
+          <div key={s.id} className="srow" draggable
+            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(s.id, 'roster'); }}
+            onDragEnd={onDragEnd}
+            style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 8px', borderRadius:9,
+              cursor:'grab', opacity: dragId === s.id ? .35 : 1 }}>
+            <button className="focusable" onClick={() => onToggle(s.id)}
+              style={{ width:18, height:18, borderRadius:6, flex:'0 0 auto',
+                border:'1.5px solid var(--primary)', background:'var(--primary)', color:'#fff',
+                display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Icon name="check" size={12} stroke={3} />
+            </button>
+            <Avatar name={s.name} size={24} />
+            <span style={{ fontSize:13.5, fontWeight:500, flex:1 }}>{s.name}</span>
+            <Icon name="grip" size={15} style={{ color:'var(--line-2)' }} />
+          </div>
+        ))}
+        {absent.length > 0 && (
+          <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.07em', textTransform:'uppercase',
+            color:'var(--muted)', padding:'12px 8px 6px' }}>Out today · {absent.length}</div>
+        )}
+        {absent.map(s => (
+          <div key={s.id} className="srow" style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 8px', borderRadius:9, opacity:.5 }}>
+            <button className="focusable" onClick={() => onToggle(s.id)}
+              style={{ width:18, height:18, borderRadius:6, flex:'0 0 auto', border:'1.5px solid var(--line-2)', background:'transparent' }} />
+            <Avatar name={s.name} size={24} solid="var(--surface-2)" />
+            <span style={{ fontSize:13.5, fontWeight:500, flex:1, textDecoration:'line-through' }}>{s.name}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Group card ---------------- */
+function GroupCard({ idx, members, roles, roleNames, pinned, onPin, freshness, hot, landed, onDragOver, onDragLeave, onDrop,
+                     dragId, onDragStart, onDragEnd, onReroll }){
+  const col = groupColor(idx), soft = groupSoft(idx), ink = groupInk(idx);
+  const RN = (roleNames && roleNames.length) ? roleNames : ROLES;
+  return (
+    <div className="pop" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+      style={{ borderRadius:'var(--r-md)', background:'var(--surface)', border:'1px solid var(--line-2)',
+        boxShadow:'var(--shadow-sm)', overflow:'hidden', display:'flex', flexDirection:'column',
+        outline: hot ? '2px dashed ' + col : 'none', outlineOffset:-2, transition:'outline .12s',
+        animationDelay:(idx * 0.04) + 's' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'9px 11px',
+        background: soft, borderBottom:'1px solid ' + soft }}>
+        <span style={{ width:10, height:10, borderRadius:3, background:col, flex:'0 0 auto' }} />
+        <span style={{ fontFamily:'var(--font-display)', fontSize:12.5, fontWeight:700, color:ink, letterSpacing:'.02em', whiteSpace:'nowrap' }}>
+          GROUP {idx + 1}</span>
+        <span style={{ flex:1 }} />
+        <span className="chip" style={{ background:'var(--surface)', color: freshness >= 90 ? 'var(--good)' : 'var(--warn)',
+          border:'1px solid var(--line)', padding:'3px 7px', fontSize:10.5 }}>{freshness}% new</span>
+        <button className="btn icon sm focusable" onClick={onReroll} title="Re-roll this group"
+          style={{ width:24, height:24, justifyContent:'center', border:'none', background:'transparent', color:ink }}>
+          <Icon name="shuffle" size={13} />
+        </button>
+      </div>
+      <div style={{ padding:'9px 10px', display:'flex', flexDirection:'column', gap:5, flex:1 }}>
+        {members.map((s, j) => {
+          const isPinned = pinned && pinned[s.id];
+          return (
+          <div key={s.id} className="srow name-in" draggable
+            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(s.id, idx); }}
+            onDragEnd={onDragEnd}
+            style={{ display:'flex', alignItems:'center', gap:9, padding:'5px 7px', borderRadius:8,
+              cursor:'grab', opacity: dragId === s.id ? .35 : 1, animationDelay:(j * 0.03) + 's' }}>
+            <Icon name="grip" size={14} style={{ color:'var(--line-2)' }} />
+            <Avatar name={s.name} size={24} color={col} landed={landed} />
+            <span style={{ fontSize:13.5, fontWeight:500, flex:1 }}>{s.name}</span>
+            {roles && j < RN.length && (
+              <span className="chip" style={{ background: j === 0 ? soft : 'var(--surface-2)',
+                color: j === 0 ? ink : 'var(--muted)', padding:'3px 7px', fontSize:10 }}>{RN[j]}</span>
+            )}
+            <button className="focusable pin-btn" onClick={() => onPin(s.id)} title={isPinned ? 'Unfreeze - may move on reshuffle' : 'Freeze in this group'}
+              style={{ display:'flex', padding:3, borderRadius:6, color: isPinned ? col : 'var(--line-2)',
+                background: isPinned ? soft : 'transparent', opacity: isPinned ? 1 : undefined }}>
+              <Icon name="pin" size={14} fill={isPinned} style={isPinned ? { fill: col, stroke: col } : null} />
+            </button>
+          </div>
+        );})}
+        {members.length === 0 && (
+          <div style={{ padding:'14px 0', textAlign:'center', color:'var(--muted)', fontSize:12 }}>drop here</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Groups grid ---------------- */
+function GroupsGrid({ groups, roles, roleNames, pinned, history, dragState, colsMax, shuffling, ...dh }){
+  let cols = groups.length <= 2 ? groups.length : groups.length <= 6 ? 3 : 4;
+  if (colsMax) cols = Math.min(cols, colsMax);
+  return (
+    <div className="scroll" style={{ flex:1, minHeight:0, padding:16 }}>
+      <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:12,
+        alignItems:'start', gridAutoRows:'min-content' }}>
+        {groups.map((g, i) => (
+          <GroupCard key={i} idx={i} members={g} roles={roles} roleNames={roleNames} pinned={pinned} onPin={dh.onPin}
+            landed={!shuffling}
+            freshness={groupFreshness(g, history)}
+            hot={dh.hotGroup === i}
+            dragId={dragState.id}
+            onDragStart={dh.onDragStart} onDragEnd={dh.onDragEnd}
+            onDragOver={(e) => { e.preventDefault(); dh.setHotGroup(i); }}
+            onDragLeave={() => dh.setHotGroup(h => h === i ? null : h)}
+            onDrop={(e) => { e.preventDefault(); dh.setHotGroup(null); dh.onDropGroup(i); }}
+            onReroll={() => dh.onReroll(i)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Insight bar ---------------- */
+function InsightBar({ stats, note, compact }){
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 16px',
+      borderTop:'1px solid var(--line)', background:'var(--surface)' }}>
+      <Chip tone="primary"><Icon name="sparkle" size={12} /> {compact ? 'Smart' : 'Smart memory'}</Chip>
+      <span style={{ fontSize:12.5, color:'var(--ink-2)', flex: compact ? 1 : '0 1 auto', minWidth:0,
+        overflow: compact ? 'hidden' : 'visible', textOverflow:'ellipsis', whiteSpace: compact ? 'nowrap' : 'normal' }}>{note}</span>
+      {!compact && <>
+        <div style={{ flex:1 }} />
+        <span style={{ fontSize:11.5, color:'var(--muted)' }}>
+          <b style={{ color:'var(--ink)', fontFamily:'var(--font-display)' }}>{stats.unique}%</b> unique pairings this term ·
+          <b style={{ color:'var(--ink)', fontFamily:'var(--font-display)' }}> {stats.never}</b> pairs never grouped ·
+          drag any name to fine-tune</span>
+      </>}
+    </div>
+  );
+}
+
+// stage.jsx - Present mode: the same groups, projected big. → window.
+
+function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshuffle, onExit, frozen, setFrozen, shuffling }){
+  const n = groups.length;
+  const RN = (roleNames && roleNames.length) ? roleNames : ROLES;
+  const cols = n <= 2 ? n : n <= 6 ? 3 : 4;
+  const rows = Math.ceil(n / cols);
+  const low = timer.seconds <= 30 && timer.seconds > 0;
+  const done = timer.seconds === 0;
+
+  return (
+    <div className="stage-in" data-stage="yes" style={{ position:'absolute', inset:0, zIndex:50, background:'var(--stage-bg)',
+      color:'var(--stage-ink)', display:'flex', flexDirection:'column', fontFamily:'var(--font-ui)' }}>
+      {/* top */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', alignItems:'center', padding:'22px 40px 12px' }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:14 }}>
+          <span style={{ fontFamily:'var(--font-display)', fontSize:26, fontWeight:700, letterSpacing:'-.015em' }}>{cls.name}</span>
+          <span style={{ fontFamily:'var(--font-display)', fontSize:13, fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', letterSpacing:'.04em' }}>
+            {n} GROUPS · {groups.reduce((a, g) => a + g.length, 0)} STUDENTS</span>
+        </div>
+        {/* big timer */}
+        <div style={{ display:'flex', alignItems:'center', gap:16, padding:'10px 22px', borderRadius:18,
+          border:'2px solid ' + (done ? 'var(--warn)' : low ? 'var(--warn)' : 'rgba(255,255,255,.16)'),
+          background: done ? 'rgba(255,170,80,.12)' : 'rgba(255,255,255,.03)' }}>
+          <Icon name="clock" size={20} style={{ color: low || done ? 'var(--warn)' : 'color-mix(in oklab, var(--stage-ink) 70%, transparent)' }} />
+          <span style={{ fontFamily:'var(--font-display)', fontSize:44, fontWeight:700, lineHeight:1, letterSpacing:'.01em',
+            color: low || done ? 'var(--warn)' : 'var(--stage-ink)', fontVariantNumeric:'tabular-nums' }}>{fmt(timer.seconds)}</span>
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            <button className="focusable" onClick={timerCtl.toggle}
+              style={{ display:'flex', alignItems:'center', gap:6, color:'color-mix(in oklab, var(--stage-ink) 80%, transparent)', fontSize:12, fontWeight:600, whiteSpace:'nowrap' }}>
+              <Icon name={timer.running ? 'pause' : 'play'} size={13} /> {timer.running ? 'Pause' : 'Start'}</button>
+            <button className="focusable" onClick={timerCtl.add}
+              style={{ display:'flex', alignItems:'center', gap:6, color:'color-mix(in oklab, var(--stage-ink) 80%, transparent)', fontSize:12, fontWeight:600, whiteSpace:'nowrap' }}>
+              <Icon name="plus" size={13} /> 1 min</button>
+          </div>
+        </div>
+        <button className="focusable" onClick={onExit} style={{ justifySelf:'end', display:'flex', alignItems:'center', gap:8,
+          color:'color-mix(in oklab, var(--stage-ink) 55%, transparent)', fontFamily:'var(--font-display)', fontSize:13, fontWeight:500, letterSpacing:'.04em',
+          padding:'8px 12px', borderRadius:10, border:'1px solid rgba(255,255,255,.14)', whiteSpace:'nowrap' }}>
+          <Icon name="x" size={15} /> ESC · BACK</button>
+      </div>
+
+      {/* group grid */}
+      <div style={{ flex:1, display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`,
+        gridTemplateRows:`repeat(${rows}, 1fr)`, gap:16, padding:'6px 40px', minHeight:0 }}>
+        {groups.map((g, i) => {
+          const col = groupGlow(i);
+          return (
+            <div key={i} className="pop" style={{ borderRadius:20, padding:'16px 22px', display:'flex', flexDirection:'column',
+              background:'rgba(255,255,255,.045)', border:'1.5px solid rgba(255,255,255,.12)',
+              boxShadow:`inset 3px 0 0 ${col}`, animationDelay:(i * 0.05) + 's', minHeight:0, overflow:'hidden' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12 }}>
+                <span style={{ width:12, height:12, borderRadius:4, background:col }} />
+                <span style={{ fontFamily:'var(--font-display)', fontSize:'clamp(18px,2vw,24px)', fontWeight:700 }}>Group {i + 1}</span>
+                <span style={{ flex:1 }} />
+                <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 40%, transparent)' }}>{g.length}</span>
+              </div>
+              <div className="scroll" style={{ display:'flex', flexDirection:'column', gap:'clamp(7px,1.1vh,13px)', justifyContent:'center', flex:1 }}>
+                {g.map((s, j) => (
+                  <div key={s.id} className="name-in" style={{ display:'flex', alignItems:'center', gap:13, animationDelay:(i * 0.05 + j * 0.04) + 's' }}>
+                    <div style={{ width:'clamp(28px,2.6vw,38px)', height:'clamp(28px,2.6vw,38px)', borderRadius:'50%',
+                      background: col, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
+                      fontWeight:700, fontSize:'clamp(12px,1.1vw,16px)', flex:'0 0 auto' }}>
+                      {s.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}</div>
+                    <span style={{ fontSize:'clamp(17px,1.9vw,26px)', fontWeight:600, letterSpacing:'-.01em', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</span>
+                    {pinned && pinned[s.id] && <Icon name="pin" size={13} fill={true} style={{ fill:col, stroke:col, flex:'0 0 auto', opacity:.9 }} />}
+                    {roles && j < RN.length && <span style={{ marginLeft:'auto', flex:'0 0 auto', fontFamily:'var(--font-display)', fontSize:'clamp(9px,.85vw,12px)',
+                      fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', textTransform:'uppercase', letterSpacing:'.05em', whiteSpace:'nowrap' }}>{RN[j]}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* controls */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12, padding:'18px 40px' }}>
+        <button className="focusable" onClick={onReshuffle} style={{ display:'flex', alignItems:'center', gap:10,
+          padding:'13px 26px', borderRadius:999, background:'var(--stage-ink)', color:'var(--stage-bg)', fontWeight:700, fontSize:16 }}>
+          <Icon name="shuffle" size={18} style={shuffling ? { animation:'spin .6s ease' } : null} /> Re-shuffle</button>
+        <button className="focusable" onClick={() => setFrozen(!frozen)} style={{ display:'flex', alignItems:'center', gap:9,
+          padding:'13px 22px', borderRadius:999, fontSize:15, fontWeight:600,
+          border:'1.5px solid ' + (frozen ? 'var(--warn)' : 'rgba(255,255,255,.22)'),
+          background: frozen ? 'rgba(255,170,80,.12)' : 'transparent', color: frozen ? 'var(--warn)' : 'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
+          <Icon name="pin" size={15} /> {frozen ? 'Frozen' : 'Freeze'}</button>
+        <button className="focusable" onClick={timerCtl.toggle} style={{ display:'flex', alignItems:'center', gap:9,
+          padding:'13px 22px', borderRadius:999, fontSize:15, fontWeight:600, border:'1.5px solid rgba(255,255,255,.22)', color:'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
+          <Icon name={timer.running ? 'pause' : 'play'} size={15} /> Timer</button>
+        <div style={{ flex:1 }} />
+        <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 35%, transparent)', letterSpacing:'.05em' }}>SPACE = RE-SHUFFLE · ESC = EXIT</span>
+      </div>
+    </div>
+  );
+}
+
+// modals.jsx - Modal shell + roster editor, add/rename class, rules manager. → window.
+const { useState: useStateM } = React;
+
+function Modal({ title, sub, onClose, children, footer, width = 460 }){
+  return (
+    <div onClick={onClose} style={{ position:'fixed', inset:0, zIndex:200, background:'color-mix(in oklab, #1F1535 40%, transparent)',
+      display:'flex', alignItems:'center', justifyContent:'center', padding:24, animation:'fadeIn .15s ease' }}>
+      <div onClick={(e) => e.stopPropagation()} className="scaleIn" style={{ width, maxWidth:'100%', maxHeight:'88vh',
+        background:'var(--surface)', borderRadius:'var(--r-lg)', boxShadow:'var(--shadow-lg)',
+        display:'flex', flexDirection:'column', overflow:'hidden', animation:'scaleIn .18s cubic-bezier(.2,.8,.25,1) both' }}>
+        <div style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'18px 20px 14px', borderBottom:'1px solid var(--line)' }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:700 }}>{title}</div>
+            {sub && <div style={{ fontSize:12.5, color:'var(--muted)', marginTop:2 }}>{sub}</div>}
+          </div>
+          <button className="btn icon sm focusable" onClick={onClose} style={{ border:'none' }}><Icon name="x" size={16} /></button>
+        </div>
+        <div className="scroll" style={{ padding:20, flex:1, minHeight:0 }}>{children}</div>
+        {footer && <div style={{ display:'flex', gap:10, justifyContent:'flex-end', padding:'14px 20px', borderTop:'1px solid var(--line)', background:'var(--surface-2)' }}>{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  width:'100%', padding:'10px 12px', borderRadius:10, border:'1.5px solid var(--line-2)',
+  background:'var(--surface-2)', fontSize:14, color:'var(--ink)', fontFamily:'var(--font-ui)', outline:'none',
+};
+
+function Label({ children, style }){
+  return <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.07em', textTransform:'uppercase', color:'var(--muted)', ...style }}>{children}</div>;
+}
+
+function RosterEditorModal({ cls, onSave, onClose }){
+  const [text, setText] = useStateM(cls.students.map(s => s.name).join('\n'));
+  const names = text.split('\n').map(s => s.trim()).filter(Boolean);
+  return (
+    <Modal title={'Edit roster · ' + cls.name} sub="One name per line. Paste a whole list - add, remove, reorder freely."
+      onClose={onClose} width={440}
+      footer={<>
+        <button className="btn focusable" onClick={onClose}>Cancel</button>
+        <button className="btn primary focusable" onClick={() => onSave(names)}>Save {names.length} students</button>
+      </>}>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} autoFocus
+        style={{ ...inputStyle, minHeight:280, resize:'vertical', lineHeight:1.7, fontFamily:'var(--font-ui)' }} />
+      <div style={{ marginTop:10, fontSize:12, color:'var(--muted)' }}>{names.length} names · attendance & history are kept for existing students.</div>
+    </Modal>
+  );
+}
+
+function AddClassModal({ onCreate, onClose }){
+  const [name, setName] = useStateM('');
+  const [text, setText] = useStateM('');
+  const names = text.split('\n').map(s => s.trim()).filter(Boolean);
+  return (
+    <Modal title="Add a class" sub="Name it, then paste your roster (or add students later)."
+      onClose={onClose} width={440}
+      footer={<>
+        <button className="btn focusable" onClick={onClose}>Cancel</button>
+        <button className="btn primary focusable" disabled={!name.trim()} onClick={() => name.trim() && onCreate(name.trim(), names)}
+          style={!name.trim() ? { opacity:.5, cursor:'not-allowed' } : {}}>Create class</button>
+      </>}>
+      <label style={{ fontSize:12, fontWeight:600, color:'var(--ink-2)' }}>Class name</label>
+      <input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. Period 2 · Geometry"
+        style={{ ...inputStyle, margin:'6px 0 16px' }} />
+      <label style={{ fontSize:12, fontWeight:600, color:'var(--ink-2)' }}>Roster <span style={{ color:'var(--muted)', fontWeight:400 }}>(one per line, optional)</span></label>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={'Ada\nBen\nCarmen\n…'}
+        style={{ ...inputStyle, margin:'6px 0 0', minHeight:160, resize:'vertical', lineHeight:1.7 }} />
+      <div style={{ marginTop:8, fontSize:12, color:'var(--muted)' }}>{names.length} students</div>
+    </Modal>
+  );
+}
+
+function RenameModal({ initial, onSave, onClose }){
+  const [name, setName] = useStateM(initial);
+  return (
+    <Modal title="Rename class" onClose={onClose} width={400}
+      footer={<>
+        <button className="btn focusable" onClick={onClose}>Cancel</button>
+        <button className="btn primary focusable" onClick={() => name.trim() && onSave(name.trim())}>Save</button>
+      </>}>
+      <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
+        onKeyDown={(e) => e.key === 'Enter' && name.trim() && onSave(name.trim())} style={inputStyle} />
+    </Modal>
+  );
+}
+
+function RulesModal({ cls, onChange, onClose }){
+  const [a1, setA1] = useStateM(''); const [a2, setA2] = useStateM('');
+  const [t1, setT1] = useStateM(''); const [t2, setT2] = useStateM('');
+  const apart = cls.keepApart || [], together = cls.keepTogether || [];
+  const nameOf = (id) => (cls.students.find(s => s.id === id) || {}).name || '?';
+
+  const addApart = () => { if (a1 && a2 && a1 !== a2) { onChange({ keepApart:[...apart, [a1, a2]] }); setA1(''); setA2(''); } };
+  const addTog   = () => { if (t1 && t2 && t1 !== t2) { onChange({ keepTogether:[...together, [t1, t2]] }); setT1(''); setT2(''); } };
+  const rmApart  = (i) => onChange({ keepApart: apart.filter((_, k) => k !== i) });
+  const rmTog    = (i) => onChange({ keepTogether: together.filter((_, k) => k !== i) });
+
+  const sel = (val, set) => (
+    <select value={val} onChange={(e) => set(e.target.value)} style={{ ...inputStyle, flex:1, padding:'9px 10px' }}>
+      <option value="">Choose…</option>
+      {cls.students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+    </select>
+  );
+
+  return (
+    <Modal title="Grouping rules" sub="Constraints the generator always respects." onClose={onClose} width={500}
+      footer={<button className="btn primary focusable" onClick={onClose}>Done</button>}>
+      <div style={{ fontSize:12.5, fontWeight:700, color:'var(--warn)', marginBottom:8 }}>⊘ Keep apart</div>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:10 }}>
+        {apart.length === 0 && <span style={{ fontSize:12.5, color:'var(--muted)' }}>No pairs yet.</span>}
+        {apart.map(([a, b], i) => (
+          <span key={i} className="chip" style={{ background:'var(--warn-soft)', color:'var(--warn)', padding:'6px 6px 6px 10px' }}>
+            {nameOf(a)} ✕ {nameOf(b)}
+            <button onClick={() => rmApart(i)} style={{ display:'flex', color:'inherit', opacity:.7 }}><Icon name="x" size={13} /></button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display:'flex', gap:8, marginBottom:22 }}>
+        {sel(a1, setA1)}<span style={{ alignSelf:'center', color:'var(--muted)' }}>✕</span>{sel(a2, setA2)}
+        <button className="btn sm focusable" onClick={addApart}><Icon name="plus" size={14} /> Add</button>
+      </div>
+
+      <div style={{ fontSize:12.5, fontWeight:700, color:'var(--good)', marginBottom:8 }}>＋ Keep together</div>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:10 }}>
+        {together.length === 0 && <span style={{ fontSize:12.5, color:'var(--muted)' }}>No pairs yet.</span>}
+        {together.map(([a, b], i) => (
+          <span key={i} className="chip" style={{ background:'var(--good-soft)', color:'var(--good)', padding:'6px 6px 6px 10px' }}>
+            {nameOf(a)} + {nameOf(b)}
+            <button onClick={() => rmTog(i)} style={{ display:'flex', color:'inherit', opacity:.7 }}><Icon name="x" size={13} /></button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display:'flex', gap:8 }}>
+        {sel(t1, setT1)}<span style={{ alignSelf:'center', color:'var(--muted)' }}>+</span>{sel(t2, setT2)}
+        <button className="btn sm focusable" onClick={addTog}><Icon name="plus" size={14} /> Add</button>
+      </div>
+    </Modal>
+  );
+}
+
+function RolesEditorModal({ cls, onSave, onClose }){
+  const [roles, setRoles] = useStateM((cls.roleNames && cls.roleNames.length ? cls.roleNames : ['Lead','Recorder','Reporter']).slice());
+  const set = (i, v) => setRoles(rs => rs.map((r, k) => k === i ? v : r));
+  const move = (i, d) => setRoles(rs => { const n = rs.slice(); const j = i + d; if (j < 0 || j >= n.length) return n; [n[i], n[j]] = [n[j], n[i]]; return n; });
+  const rm = (i) => setRoles(rs => rs.filter((_, k) => k !== i));
+  const add = () => setRoles(rs => [...rs, 'New role']);
+  const PRESETS = {
+    'Classic': ['Lead','Recorder','Reporter','Materials','Timekeeper'],
+    'Discussion': ['Facilitator','Note-taker','Skeptic','Summarizer'],
+    'Lab': ['Director','Materials','Data','Safety'],
+    'Jigsaw': ['Expert A','Expert B','Expert C','Expert D'],
+  };
+  return (
+    <Modal title="Roles for this class" sub="Name the jobs each group member takes on. Assigned top-down when Roles is on."
+      onClose={onClose} width={460}
+      footer={<>
+        <button className="btn focusable" onClick={onClose}>Cancel</button>
+        <button className="btn primary focusable" onClick={() => onSave(roles.map(r => r.trim()).filter(Boolean))}>Save roles</button>
+      </>}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14, flexWrap:'wrap' }}>
+        <span style={{ fontSize:12, fontWeight:600, color:'var(--muted)' }}>Start from:</span>
+        {Object.keys(PRESETS).map(k => (
+          <button key={k} className="btn sm focusable" onClick={() => setRoles(PRESETS[k].slice())}>{k}</button>
+        ))}
+      </div>
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {roles.map((r, i) => (
+          <div key={i} style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <span style={{ width:22, height:22, borderRadius:7, background:'var(--primary-soft)', color:'var(--primary)',
+              display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'var(--font-display)', fontWeight:700, fontSize:11, flex:'0 0 auto' }}>{i + 1}</span>
+            <input value={r} onChange={(e) => set(i, e.target.value)} style={{ ...inputStyle, flex:1, padding:'8px 11px' }} />
+            <button className="btn icon sm focusable" onClick={() => move(i, -1)} disabled={i === 0} style={{ border:'none', opacity: i === 0 ? .3 : 1 }} title="Move up"><Icon name="chevDown" size={14} style={{ transform:'rotate(180deg)' }} /></button>
+            <button className="btn icon sm focusable" onClick={() => move(i, 1)} disabled={i === roles.length - 1} style={{ border:'none', opacity: i === roles.length - 1 ? .3 : 1 }} title="Move down"><Icon name="chevDown" size={14} /></button>
+            <button className="btn icon sm focusable" onClick={() => rm(i)} style={{ border:'none', color:'var(--warn)' }} title="Remove"><Icon name="x" size={14} /></button>
+          </div>
+        ))}
+      </div>
+      <button className="btn ghost sm focusable" onClick={add} style={{ color:'var(--primary)', marginTop:10 }}><Icon name="plus" size={14} /> Add role</button>
+      <div style={{ marginTop:12, fontSize:12, color:'var(--muted)' }}>Groups bigger than your role list leave extra members unassigned.</div>
+    </Modal>
+  );
+}
+
+function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
+  const [fmt, setFmt] = useStateM('list');
+  const [incRoles, setIncRoles] = useStateM(!!rolesOn);
+  const [incHeader, setIncHeader] = useStateM(true);
+  const [copied, setCopied] = useStateM(false);
+  const RN = (roleNames && roleNames.length) ? roleNames : ['Lead','Recorder','Reporter','Materials','Timekeeper'];
+  const dateStr = new Date().toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+  const roleFor = (j) => (incRoles && j < RN.length) ? RN[j] : null;
+
+  const buildList = () => {
+    const lines = [];
+    if (incHeader) lines.push(`${cls.name} - ${groups.length} groups - ${dateStr}`, '');
+    groups.forEach((g, i) => {
+      lines.push(`Group ${i + 1}`);
+      g.forEach((s, j) => { const r = roleFor(j); lines.push(`  • ${s.name}${r ? ` - ${r}` : ''}`); });
+      lines.push('');
+    });
+    return lines.join('\n').trim();
+  };
+  const buildCSV = () => {
+    const rows = [['Group', 'Student', incRoles ? 'Role' : null].filter(Boolean).join(',')];
+    groups.forEach((g, i) => g.forEach((s, j) => {
+      const r = roleFor(j);
+      rows.push([i + 1, `"${s.name}"`, incRoles ? `"${r || ''}"` : null].filter(x => x !== null).join(','));
+    }));
+    return rows.join('\n');
+  };
+  const text = fmt === 'table' ? buildCSV() : buildList();
+
+  const download = () => {
+    const ext = fmt === 'table' ? 'csv' : 'txt';
+    const mime = fmt === 'table' ? 'text/csv' : 'text/plain';
+    const blob = new Blob([text], { type: mime });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${cls.name.replace(/[^\w]+/g, '-')}-groups.${ext}`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  const copy = () => { navigator.clipboard && navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1400); };
+  const print = () => {
+    const cards = groups.map((g, i) => `
+      <div class="g">
+        <div class="gh"><span class="dot" style="background:${groupColor(i)}"></span>Group ${i + 1}</div>
+        <ol>${g.map((s, j) => { const r = roleFor(j); return `<li>${s.name}${r ? ` <span class="r">${r}</span>` : ''}</li>`; }).join('')}</ol>
+      </div>`).join('');
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<!doctype html><html><head><title>${cls.name} - groups</title>
+      <style>
+        *{box-sizing:border-box;font-family:'Schibsted Grotesk',-apple-system,Segoe UI,system-ui,sans-serif;}
+        body{margin:32px;color:#1F1535;}
+        h1{font-size:20px;margin:0 0 2px;} .sub{color:#6E5AA8;font-size:13px;margin-bottom:20px;}
+        .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+        .g{border:1px solid #E3D6EC;border-radius:10px;padding:12px 14px;break-inside:avoid;}
+        .gh{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+        .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+        ol{margin:0;padding-left:18px;} li{margin:3px 0;font-size:14px;}
+        .r{color:#6E5AA8;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-left:4px;}
+        @media print{@page{margin:1.4cm;}}
+      </style></head><body>
+      <h1>${cls.name}</h1><div class="sub">${groups.length} groups · ${dateStr}</div>
+      <div class="grid">${cards}</div>
+      <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
+      </body></html>`);
+    w.document.close();
+  };
+
+  return (
+    <Modal title="Export groups" sub={`${cls.name} · ${groups.length} groups · ${dateStr}`} onClose={onClose} width={520}
+      footer={<>
+        <button className="btn focusable" onClick={print}><Icon name="printer" size={15} /> Print</button>
+        <button className="btn focusable" onClick={download}><Icon name="download" size={15} /> Download .{fmt === 'table' ? 'csv' : 'txt'}</button>
+        <button className="btn primary focusable" onClick={copy}><Icon name={copied ? 'check' : 'copy'} size={15} /> {copied ? 'Copied!' : 'Copy'}</button>
+      </>}>
+      <div style={{ display:'flex', gap:18, marginBottom:14, flexWrap:'wrap' }}>
+        <div>
+          <Label style={{ marginBottom:7 }}>Format</Label>
+          <div className="seg">
+            <button className={fmt === 'list' ? 'act' : ''} onClick={() => setFmt('list')}>List</button>
+            <button className={fmt === 'table' ? 'act' : ''} onClick={() => setFmt('table')}>Spreadsheet</button>
+          </div>
+        </div>
+        <div>
+          <Label style={{ marginBottom:7 }}>Include</Label>
+          <div style={{ display:'flex', gap:8 }}>
+            <button className="btn sm focusable" onClick={() => setIncRoles(v => !v)}
+              style={incRoles ? { borderColor:'var(--primary)', background:'var(--primary-soft)', color:'var(--primary)' } : {}}>Roles</button>
+            <button className="btn sm focusable" onClick={() => setIncHeader(v => !v)}
+              style={incHeader ? { borderColor:'var(--primary)', background:'var(--primary-soft)', color:'var(--primary)' } : {}}>Title & date</button>
+          </div>
+        </div>
+      </div>
+      <Label style={{ marginBottom:7 }}>Preview</Label>
+      <pre className="scroll" style={{ margin:0, maxHeight:240, overflow:'auto', background:'var(--surface-2)',
+        border:'1px solid var(--line-2)', borderRadius:10, padding:'12px 14px', fontFamily:'var(--font-mono, ui-monospace, monospace)',
+        fontSize:12.5, lineHeight:1.6, color:'var(--ink-2)', whiteSpace:'pre-wrap' }}>{text}</pre>
+    </Modal>
+  );
+}
+
+// app.jsx - orchestrator: state, generation, drag, timer, present mode, tweaks.
+const { useState: uS, useEffect: uE, useRef: uR } = React;
+
+// Values are oklch(l c h). "Plum" is locked as the app default (see TWEAK_DEFAULTS below) and is
+// tuned to the brand's Tiffany teal #2BB7B3, darkened to a text-safe "ink" (l lower than the pure
+// accent) since --primary doubles as button text/border color, not just a background fill.
+const ACCENTS = [
+  { name:'Plum',       l:0.50, c:0.086, h:192.6 },
+  { name:'Teal',       l:0.56, c:0.10,  h:192 },
+  { name:'Orchid',     l:0.58, c:0.13,  h:330 },
+  { name:'Periwinkle', l:0.56, c:0.15,  h:284 },
+  { name:'Indigo',     l:0.50, c:0.18,  h:272 },
+];
+
+const TWEAK_DEFAULTS = {
+  "accent": "Plum",
+  "groupStyle": "vibrant",
+  "timerMinutes": 5,
+  "defaultGroupSize": 2
+};
+
+function App(){
+  const t = TWEAK_DEFAULTS; // locked choices (was the design tool's live Tweaks panel)
+
+  // apply group color style every render (module-level cfg)
+  setGroupCfg(t.groupStyle === 'mono' ? { mono:true } : { mono:false, chroma: t.groupStyle === 'soft' ? 0.085 : 0.145 });
+
+  // apply accent CSS vars
+  uE(() => {
+    const a = ACCENTS.find(x => x.name === t.accent) || ACCENTS[0];
+    const r = document.documentElement.style;
+    r.setProperty('--primary', `oklch(${a.l} ${a.c} ${a.h})`);
+    r.setProperty('--primary-press', `oklch(${a.l - 0.06} ${a.c} ${a.h})`);
+    r.setProperty('--primary-soft', `oklch(0.95 ${a.c * 0.22} ${a.h})`);
+  }, [t.accent]);
+
+  // ---- core state ----
+  const init = uR(loadState());
+  const [classes, setClasses] = uS(() => (init.current && init.current.classes) || defaultClasses());
+  const [activeId, setActiveId] = uS(() => (init.current && init.current.activeId) || (classes[1] ? classes[1].id : classes[0].id));
+  const [config, setConfig] = uS(() => (init.current && init.current.config) || { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true });
+  const [groupIds, setGroupIds] = uS([]);
+  const [view, setView] = uS('work');
+  const [shuffling, setShuffling] = uS(false);
+  const [frozen, setFrozen] = uS(false);
+  const [note, setNote] = uS('Fresh mix - everyone’s with new partners today.');
+
+  // responsive
+  const [vw, setVw] = uS(typeof window !== 'undefined' ? window.innerWidth : 1440);
+  uE(() => { const on = () => setVw(window.innerWidth); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on); }, []);
+  const mobile = vw < 760;
+  const [mTab, setMTab] = uS('groups');
+
+  // drag + hover
+  const [dragState, setDragState] = uS({ id:null, from:null });
+  const [hotGroup, setHotGroup] = uS(null);
+  const [rosterHot, setRosterHot] = uS(false);
+
+  // modal
+  const [modal, setModal] = uS(null);
+
+  // timer
+  const [timer, setTimer] = uS({ seconds: t.timerMinutes * 60, running:false, initial: t.timerMinutes * 60 });
+
+  const cls = classes.find(c => c.id === activeId) || classes[0];
+  const byId = {}; cls.students.forEach(s => byId[s.id] = s);
+  const groups = groupIds.map(g => g.map(id => byId[id]).filter(Boolean));
+  const presentN = cls.students.filter(s => s.present).length;
+
+  // ---- persistence ----
+  uE(() => { saveState({ classes, activeId, config }); }, [classes, activeId, config]);
+
+  // ---- timer tick ----
+  uE(() => {
+    if (!timer.running || timer.seconds <= 0) return;
+    const id = setInterval(() => setTimer(tm => tm.seconds <= 1 ? { ...tm, seconds:0, running:false } : { ...tm, seconds: tm.seconds - 1 }), 1000);
+    return () => clearInterval(id);
+  }, [timer.running, timer.seconds]);
+
+  // sync timer length with tweak when not running
+  uE(() => { setTimer(tm => tm.running ? tm : { seconds: t.timerMinutes * 60, running:false, initial: t.timerMinutes * 60 }); }, [t.timerMinutes]);
+
+  // default group size tweak drives the stepper when in size mode
+  uE(() => { setConfig(c => c.mode === 'size' && c.value !== t.defaultGroupSize ? { ...c, value: t.defaultGroupSize } : c); }, [t.defaultGroupSize]);
+
+  const timerCtl = {
+    toggle: () => setTimer(tm => (tm.seconds === 0 ? { ...tm, seconds: tm.initial, running:true } : { ...tm, running: !tm.running })),
+    add: () => setTimer(tm => ({ ...tm, seconds: tm.seconds + 60 })),
+    reset: () => setTimer(tm => ({ ...tm, seconds: tm.initial, running:false })),
+  };
+
+  // ---- generation ----
+  function computeNote(grps, history){
+    let best = null, bestC = 1;
+    cls.students.forEach((a, i) => cls.students.slice(i + 1).forEach(b => {
+      const k = pairKey(a.id, b.id); const ct = history[k] || 0;
+      if (ct > bestC){ const gi = grps.findIndex(g => g.some(s => s.id === a.id)); const gj = grps.findIndex(g => g.some(s => s.id === b.id));
+        if (gi !== -1 && gj !== -1 && gi !== gj){ best = { a:a.name, b:b.name, ct }; bestC = ct; } }
+    }));
+    return best ? `${best.a} & ${best.b} had paired ${best.ct}× - kept apart this round.`
+                : 'Fresh mix - everyone’s with new partners today.';
+  }
+
+  function regenerate(commit){
+    const pinnedMap = cls.pinned || {};
+    const pinnedSeed = groupIds.map(g => g.filter(id => pinnedMap[id] && byId[id] && byId[id].present).map(id => byId[id]));
+    const g = generateGroups(cls.students, {
+      mode: config.mode, value: config.value, avoidRecent: config.avoidRecent, balance: config.balance,
+      history: cls.history || {}, keepApart: cls.keepApart || [], keepTogether: cls.keepTogether || [],
+      pinnedSeed,
+    });
+    setGroupIds(g.map(arr => arr.map(s => s.id)));
+    setNote(computeNote(g, cls.history || {}));
+    setShuffling(true); setTimeout(() => setShuffling(false), 600);
+    if (commit){
+      const h = commitHistory(g, cls.history || {});
+      setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+    }
+  }
+
+  // auto (re)generate on class / generation-config change - no commit
+  uE(() => { regenerate(false); /* eslint-disable-next-line */ }, [activeId, config.mode, config.value, config.avoidRecent, config.balance]);
+
+  // ---- drag move ----
+  const moveTo = (targetIdx) => {
+    const id = dragState.id; if (id == null) return;
+    setGroupIds(gs => {
+      const next = gs.map(g => g.filter(x => x !== id));
+      while (next.length <= targetIdx) next.push([]);
+      next[targetIdx] = [...next[targetIdx], id];
+      return next;
+    });
+  };
+  const dropRoster = () => { // mark absent
+    const id = dragState.id; if (id == null) return;
+    if (dragState.from === 'roster') return;
+    setGroupIds(gs => gs.map(g => g.filter(x => x !== id)));
+    setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, students: c.students.map(s => s.id === id ? { ...s, present:false } : s) } : c));
+  };
+  const endDrag = () => { setDragState({ id:null, from:null }); setHotGroup(null); setRosterHot(false); };
+
+  // attendance toggle keeps groups in sync
+  const togglePresent = (id) => {
+    const s = byId[id]; const goingAbsent = s.present;
+    setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, students: c.students.map(x => x.id === id ? { ...x, present: !x.present } : x) } : c));
+    setGroupIds(gs => {
+      if (goingAbsent) return gs.map(g => g.filter(x => x !== id));
+      if (gs.length === 0) return gs;
+      const small = gs.reduce((mi, g, i, arr) => g.length < arr[mi].length ? i : mi, 0);
+      return gs.map((g, i) => i === small ? [...g, id] : g);
+    });
+  };
+
+  // re-roll one group: swap two members with another group
+  const rerollGroup = (i) => {
+    setGroupIds(gs => {
+      if (gs.length < 2) return gs;
+      const next = gs.map(g => [...g]);
+      let j = i; while (j === i) j = (Math.random() * next.length) | 0;
+      if (!next[i].length || !next[j].length) return next;
+      const ai = (Math.random() * next[i].length) | 0, bj = (Math.random() * next[j].length) | 0;
+      const tmp = next[i][ai]; next[i][ai] = next[j][bj]; next[j][bj] = tmp;
+      return next;
+    });
+    setShuffling(true); setTimeout(() => setShuffling(false), 600);
+  };
+
+  // freeze/unfreeze a student in their current group
+  const togglePin = (id) => {
+    setClasses(cs => cs.map(c => {
+      if (c.id !== cls.id) return c;
+      const p = { ...(c.pinned || {}) };
+      if (p[id]) delete p[id]; else p[id] = true;
+      return { ...c, pinned: p };
+    }));
+  };
+
+  // ---- present mode + keyboard ----
+  const enterPresent = () => {
+    // commit this arrangement as a real session
+    const h = commitHistory(groups, cls.history || {});
+    setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+    setView('stage');
+  };
+  uE(() => {
+    if (view !== 'stage') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setView('work');
+      else if (e.code === 'Space'){ e.preventDefault(); regenerate(false); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view, cls, config]);
+
+  // ---- class ops ----
+  const stats = termStats(cls.history || {}, cls.students);
+
+  const dh = { onDragStart:(id, from) => setDragState({ id, from }), onDragEnd:endDrag,
+    onDropGroup:moveTo, setHotGroup, hotGroup, onReroll:rerollGroup, onPin:togglePin };
+
+  const rosterEl = (
+    <RosterPanel students={cls.students} onToggle={togglePresent} mobile={mobile}
+      onEdit={() => setModal({ type:'roster' })}
+      dragId={dragState.id} onDragStart={dh.onDragStart} onDragEnd={endDrag}
+      onDropRoster={dropRoster} rosterHot={rosterHot} setRosterHot={setRosterHot} />
+  );
+  const groupsEl = (
+    <GroupsGrid groups={groups} roles={config.roles} roleNames={cls.roleNames} pinned={cls.pinned}
+      history={cls.history || {}} dragState={dragState} colsMax={mobile ? 1 : null} shuffling={shuffling} {...dh} />
+  );
+
+  return (
+    <div style={{ position:'relative', height:'100vh', display:'flex', overflow:'hidden' }}>
+      {!mobile && (
+        <Sidebar classes={classes} activeId={activeId} onSelect={setActiveId}
+          onAddClass={() => setModal({ type:'add' })}
+          onRenameClass={(id) => setModal({ type:'rename', id })} />
+      )}
+
+      <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0 }}>
+        <Toolbar cls={cls} config={config} setConfig={setConfig}
+          onGenerate={() => regenerate(true)} onPresent={enterPresent} onExport={() => setModal({ type:'export' })}
+          timer={timer} timerCtl={timerCtl} onRules={() => setModal({ type:'rules' })}
+          onEditRoles={() => setModal({ type:'roles' })}
+          presentN={presentN} totalN={cls.students.length} shuffling={shuffling}
+          onRename={() => setModal({ type:'rename', id: cls.id })}
+          mobile={mobile} classes={classes} activeId={activeId} onSelectClass={setActiveId} />
+
+        {mobile ? (
+          <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
+            <div style={{ display:'flex', gap:6, padding:'10px 12px', borderBottom:'1px solid var(--line)', background:'var(--surface)' }}>
+              {[['groups', 'Groups', groups.length], ['roster', 'Roster', presentN]].map(([k, lbl, n]) => (
+                <button key={k} className="focusable" onClick={() => setMTab(k)}
+                  style={{ flex:1, padding:'10px 0', borderRadius:10, fontWeight:700, fontSize:14,
+                    background: mTab === k ? 'var(--primary)' : 'var(--surface-2)',
+                    color: mTab === k ? '#fff' : 'var(--muted)', border:'1px solid ' + (mTab === k ? 'var(--primary)' : 'var(--line-2)') }}>
+                  {lbl} <span style={{ fontFamily:'var(--font-display)', opacity:.7 }}>{n}</span>
+                </button>
+              ))}
+            </div>
+            {mTab === 'groups'
+              ? <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>{groupsEl}<InsightBar stats={stats} note={note} compact /></div>
+              : rosterEl}
+          </div>
+        ) : (
+          <div style={{ flex:1, display:'flex', minHeight:0 }}>
+            {rosterEl}
+            <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0 }}>
+              {groupsEl}
+              <InsightBar stats={stats} note={note} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {view === 'stage' && (
+        <Stage cls={cls} groups={groups} roles={config.roles} roleNames={cls.roleNames} pinned={cls.pinned}
+          timer={timer} timerCtl={timerCtl}
+          onReshuffle={() => regenerate(false)} onExit={() => setView('work')}
+          frozen={frozen} setFrozen={setFrozen} shuffling={shuffling} />
+      )}
+
+      {/* modals */}
+      {modal && modal.type === 'add' && (
+        <AddClassModal onClose={() => setModal(null)} onCreate={(name, names) => {
+          const c = { id:'c' + Date.now(), name, students: mkStudents(names.length ? names : ['Student 1','Student 2','Student 3','Student 4']), history:{}, keepApart:[], keepTogether:[], roleNames:[...ROLES], pinned:{} };
+          setClasses(cs => [...cs, c]); setActiveId(c.id); setModal(null);
+        }} />
+      )}
+      {modal && modal.type === 'roster' && (
+        <RosterEditorModal cls={cls} onClose={() => setModal(null)} onSave={(names) => {
+          setClasses(cs => cs.map(c => {
+            if (c.id !== cls.id) return c;
+            const existing = c.students;
+            const students = names.map(nm => existing.find(s => s.name === nm) || { id: uid(), name: nm, present:true, level: 1 + Math.floor(Math.random()*3) });
+            return { ...c, students };
+          }));
+          setModal(null);
+        }} />
+      )}
+      {modal && modal.type === 'rename' && (
+        <RenameModal initial={(classes.find(c => c.id === modal.id) || {}).name || ''} onClose={() => setModal(null)}
+          onSave={(name) => { setClasses(cs => cs.map(c => c.id === modal.id ? { ...c, name } : c)); setModal(null); }} />
+      )}
+      {modal && modal.type === 'rules' && (
+        <RulesModal cls={cls} onClose={() => setModal(null)}
+          onChange={(patch) => setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, ...patch } : c))} />
+      )}
+      {modal && modal.type === 'roles' && (
+        <RolesEditorModal cls={cls} onClose={() => setModal(null)}
+          onSave={(roleNames) => { setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, roleNames } : c)); setModal(null); }} />
+      )}
+      {modal && modal.type === 'export' && (
+        <ExportModal cls={cls} groups={groups} roleNames={cls.roleNames} rolesOn={config.roles} onClose={() => setModal(null)} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+</script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+/* Random Group Generator - hi-fi prototype styles */
+@import url('vendor/fonts/fonts.css'); /* bundled locally; was Google Fonts CDN. Fully offline. */
+
+:root{
+  --font-display:'Schibsted Grotesk', system-ui, sans-serif;
+  --font-ui:'Schibsted Grotesk', system-ui, sans-serif;
+  --font-serif:'Crimson Pro', Georgia, serif;
+
+  --bg:#FBF7FC;
+  --surface:#FFFFFF;
+  --surface-2:#FBF3FA;
+  --ink:#1F1535;
+  --ink-2:#4A3F6E;
+  --muted:#9B86BE;
+  --line:#EFE4F1;
+  --line-2:#E3D6EC;
+  --fill:#EBE0F1; /* neutral "not yet grouped" avatar dot, blooms to its group color once a shuffle lands */
+
+  --primary:oklch(0.50 0.086 192.6); /* teal ink: darkened from the brand's Tiffany teal #2BB7B3 (~#007270) so it reads as text/borders at safe contrast; matches ACCENTS[0] "Plum" below */
+  --primary-press:oklch(0.44 0.086 192.6);
+  --primary-soft:oklch(0.95 0.019 192.6);
+  --primary-ink:#ffffff;
+
+  --good:oklch(0.55 0.10 178);
+  --good-soft:oklch(0.95 0.04 182);
+  --warn:oklch(0.62 0.13 48);
+  --warn-soft:oklch(0.96 0.05 62);
+
+  --stage-bg:#2E1F4A;
+  --stage-ink:#FBF7FC;
+
+  --r-sm:8px; --r-md:12px; --r-lg:18px; --r-xl:24px;
+  --shadow-sm:0 1px 2px rgba(40,33,22,.06), 0 1px 0 rgba(40,33,22,.04);
+  --shadow-md:0 4px 16px rgba(40,33,22,.10), 0 1px 3px rgba(40,33,22,.06);
+  --shadow-lg:0 18px 50px rgba(30,24,14,.22), 0 4px 12px rgba(30,24,14,.12);
+
+  --sp:1; /* density multiplier, set by tweak */
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;}
+body{
+  font-family:var(--font-ui);
+  background:var(--bg);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  overflow:hidden;
+}
+#root{height:100vh;}
+
+/* hide scrollbars but keep scroll */
+.scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent;}
+.scroll::-webkit-scrollbar{width:8px;}
+.scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:99px;}
+.scroll::-webkit-scrollbar-track{background:transparent;}
+
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+input{font-family:inherit;}
+
+/* focus ring */
+.focusable:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
+
+/* ---- buttons ---- */
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-ui);font-weight:600;
+  font-size:14px;line-height:1;padding:10px 15px;border-radius:var(--r-md);
+  border:1.5px solid var(--line-2);background:var(--surface);color:var(--ink);
+  transition:transform .08s ease, background .15s, border-color .15s, box-shadow .15s;white-space:nowrap;}
+.btn:hover{background:var(--surface-2);border-color:var(--muted);}
+.btn:active{transform:translateY(1px);}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink);}
+.btn.primary:hover{background:var(--primary-press);border-color:var(--primary-press);}
+.btn.dark{background:var(--ink);border-color:var(--ink);color:#fff;}
+.btn.dark:hover{background:#160B2A;}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted);}
+.btn.ghost:hover{background:var(--surface-2);color:var(--ink);}
+.btn.sm{padding:7px 11px;font-size:13px;border-radius:var(--r-sm);}
+.btn.icon{padding:9px;border-radius:var(--r-sm);}
+
+/* ---- toggle ---- */
+.tg{width:38px;height:22px;border-radius:99px;background:var(--line-2);padding:2px;display:flex;
+  transition:background .18s;flex:0 0 auto;cursor:pointer;}
+.tg.on{background:var(--primary);justify-content:flex-end;}
+.tg .knob{width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);
+  transition:transform .18s;}
+
+/* ---- chip ---- */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;
+  padding:5px 9px;border-radius:99px;line-height:1;white-space:nowrap;}
+
+/* ---- segmented ---- */
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line-2);border-radius:var(--r-md);padding:3px;gap:2px;}
+.seg button{padding:7px 13px;font-size:13px;font-weight:600;border-radius:9px;color:var(--muted);transition:.12s;white-space:nowrap;}
+.seg button.act{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm);}
+
+/* ---- card entrance ---- */
+@keyframes pop{from{transform:translateY(10px) scale(.97);}to{transform:none;}}
+@keyframes flipIn{0%{opacity:0;transform:rotateX(40deg);}100%{opacity:1;transform:none;}}
+@keyframes nameIn{from{transform:translateY(5px);}to{transform:none;}}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes scaleIn{from{opacity:0;transform:scale(.96);}to{opacity:1;transform:none;}}
+.pop{animation:pop .4s cubic-bezier(.2,.8,.25,1) both;}
+.name-in{animation:nameIn .35s cubic-bezier(.2,.8,.25,1) both;}
+
+/* ---- drag ---- */
+.dragging{opacity:.35;}
+.drag-ghost{position:fixed;pointer-events:none;z-index:9999;transform:rotate(-3deg);box-shadow:var(--shadow-lg);}
+.drop-active{outline:2px dashed var(--primary);outline-offset:-3px;background:var(--primary-soft)!important;}
+
+/* student row */
+.srow{transition:background .12s, opacity .15s;}
+.srow:hover{background:var(--surface-2);}
+.pin-btn{opacity:0;transition:opacity .12s, background .12s;}
+.srow:hover .pin-btn{opacity:1;}
+@media (hover: none){ .pin-btn{opacity:.55;} }
+
+/* stage transition */
+@keyframes stageIn{from{opacity:0;transform:scale(1.04);}to{opacity:1;transform:none;}}
+.stage-in{animation:stageIn .45s cubic-bezier(.2,.8,.25,1) both;}
+
+/* shuffle spin on icon */
+@keyframes spin{to{transform:rotate(360deg);}}
+.spin{animation:spin .6s ease;}
+
+/* subtle pulse for live timer */
+@keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:.3;}}
+.live-dot{animation:pulseDot 1.4s ease-in-out infinite;}
+
+::selection{background:var(--primary-soft);}
+
+@media (prefers-reduced-motion: reduce){
+  .pop,.name-in,.stage-in,.spin{animation:none!important;}
+}
