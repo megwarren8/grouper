@@ -427,8 +427,8 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
             <Icon name="sparkle" size={15} /> Roles <Toggle on={config.roles} />
           </button>
           <button className="focusable" onClick={onEditRoles} title="Edit role names"
-            style={{ display:'flex', padding:'10px 9px', color:'inherit', borderLeft:'1px solid ' + (config.roles ? 'var(--primary)' : 'var(--line-2)'), opacity:.8 }}>
-            <Icon name="gear" size={15} />
+            style={{ display:'flex', alignItems:'center', padding:'10px 11px', color:'inherit', borderLeft:'1px solid ' + (config.roles ? 'var(--primary)' : 'var(--line-2)') }}>
+            <Icon name="edit" size={15} />
           </button>
         </div>
         <button className="btn focusable" onClick={onGenerate}>
@@ -887,12 +887,13 @@ function RulesModal({ cls, onChange, onClose }){
   );
 }
 
-function RolesEditorModal({ cls, onSave, onClose }){
+function RolesEditorModal({ cls, onSave, onSaveAsDefault, onClose }){
   const [roles, setRoles] = useStateM((cls.roleNames && cls.roleNames.length ? cls.roleNames : ['Lead','Recorder','Reporter']).slice());
   const set = (i, v) => setRoles(rs => rs.map((r, k) => k === i ? v : r));
   const move = (i, d) => setRoles(rs => { const n = rs.slice(); const j = i + d; if (j < 0 || j >= n.length) return n; [n[i], n[j]] = [n[j], n[i]]; return n; });
   const rm = (i) => setRoles(rs => rs.filter((_, k) => k !== i));
   const add = () => setRoles(rs => [...rs, 'New role']);
+  const cleanRoles = () => roles.map(r => r.trim()).filter(Boolean);
   const PRESETS = {
     'Classic': ['Lead','Recorder','Reporter','Materials','Timekeeper'],
     'Discussion': ['Facilitator','Note-taker','Skeptic','Summarizer'],
@@ -901,10 +902,15 @@ function RolesEditorModal({ cls, onSave, onClose }){
   };
   return (
     <Modal title="Roles for this class" sub="Name the jobs each group member takes on. Assigned top-down when Roles is on."
-      onClose={onClose} width={460}
+      onClose={onClose} width={520}
       footer={<>
         <button className="btn focusable" onClick={onClose}>Cancel</button>
-        <button className="btn primary focusable" onClick={() => onSave(roles.map(r => r.trim()).filter(Boolean))}>Save roles</button>
+        <button className="btn focusable" onClick={() => onSaveAsDefault(cleanRoles())} title="Use for this class AND set as the default for every new class you make.">
+          Save and update default roles
+        </button>
+        <button className="btn primary focusable" onClick={() => onSave(cleanRoles())}>
+          Save and use now
+        </button>
       </>}>
       <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14, flexWrap:'wrap' }}>
         <span style={{ fontSize:12, fontWeight:600, color:'var(--muted)' }}>Start from:</span>
@@ -1071,6 +1077,7 @@ function App(){
   const [classes, setClasses] = uS(() => (init.current && init.current.classes) || defaultClasses());
   const [activeId, setActiveId] = uS(() => (init.current && init.current.activeId) || (classes[1] ? classes[1].id : classes[0].id));
   const [config, setConfig] = uS(() => (init.current && init.current.config) || { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true });
+  const [defaultRoles, setDefaultRoles] = uS(() => (init.current && Array.isArray(init.current.defaultRoles) && init.current.defaultRoles.length) ? init.current.defaultRoles.slice() : [...ROLES]);
   const [groupIds, setGroupIds] = uS([]);
   const [view, setView] = uS('work');
   const [shuffling, setShuffling] = uS(false);
@@ -1100,7 +1107,7 @@ function App(){
   const presentN = cls.students.filter(s => s.present).length;
 
   // ---- persistence ----
-  uE(() => { saveState({ classes, activeId, config }); }, [classes, activeId, config]);
+  uE(() => { saveState({ classes, activeId, config, defaultRoles }); }, [classes, activeId, config, defaultRoles]);
 
   // ---- timer tick ----
   uE(() => {
@@ -1296,7 +1303,7 @@ function App(){
       {/* modals */}
       {modal && modal.type === 'add' && (
         <AddClassModal onClose={() => setModal(null)} onCreate={(name, names) => {
-          const c = { id:'c' + Date.now(), name, students: mkStudents(names.length ? names : ['Student 1','Student 2','Student 3','Student 4']), history:{}, keepApart:[], keepTogether:[], roleNames:[...ROLES], pinned:{} };
+          const c = { id:'c' + Date.now(), name, students: mkStudents(names.length ? names : ['Student 1','Student 2','Student 3','Student 4']), history:{}, keepApart:[], keepTogether:[], roleNames:[...defaultRoles], pinned:{} };
           setClasses(cs => [...cs, c]); setActiveId(c.id); setModal(null);
         }} />
       )}
@@ -1332,7 +1339,12 @@ function App(){
       )}
       {modal && modal.type === 'roles' && (
         <RolesEditorModal cls={cls} onClose={() => setModal(null)}
-          onSave={(roleNames) => { setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, roleNames } : c)); setModal(null); }} />
+          onSave={(roleNames) => { setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, roleNames } : c)); setModal(null); }}
+          onSaveAsDefault={(roleNames) => {
+            setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, roleNames } : c));
+            setDefaultRoles(roleNames);
+            setModal(null);
+          }} />
       )}
       {modal && modal.type === 'export' && (
         <ExportModal cls={cls} groups={groups} roleNames={cls.roleNames} rolesOn={config.roles} onClose={() => setModal(null)} />
