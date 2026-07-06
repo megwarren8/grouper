@@ -43,7 +43,7 @@ jobs:
           mkdir -p _site
           rsync -a ./ _site/ \
             --exclude _site --exclude .git --exclude .github \
-            --exclude README.md --exclude netlify.toml --exclude .gitignore \
+            --exclude README.md --exclude CHANGELOG.md --exclude netlify.toml --exclude .gitignore \
             --exclude '*.command' --exclude '*.icns' --exclude run.sh --exclude deploy
 
       - name: Deploy to Cloudflare Pages
