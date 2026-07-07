@@ -148,3 +148,41 @@ Five follow-ups on the same day's pass, all in `index.html`:
 Verified in-browser (desktop, 780px narrow) with no console errors; confirmed rotate
 forward/back both work, confirmed the Edit-roles overlay opens correctly over the darkened
 Present background and a rename saves + reflects live in the projected groups.
+
+## 2026-07-07 (later still)
+
+**Fixed: "group size" mode could strand exactly one student alone.** With 19 students and
+group size 2, the generator picked `G = ceil(19/2) = 10` groups, split as evenly as
+possible - 9 pairs plus one group of 1 (whoever didn't fit). She flagged this from a
+screenshot: she'd have had to manually bump group size to 3 just to keep everyone paired,
+which defeats the point of asking for size 2 in the first place.
+
+Root cause, in `generateGroups` (`index.html`): even-splitting `n` students across `G`
+groups always produces two possible sizes, `base` and `base+1` (`base = floor(n/G)`). When
+`base === 1`, the "short" groups end up at size 1 - which is only ever a real problem when
+the requested size is 2 (`base+1 = 2 = value`, so `base = 1` IS a lone student). For size
+3+ the short groups still land on 2+ members, never truly alone.
+
+Fix: after computing the initial `G` for size mode, walk it down one at a time while it
+would still produce a mixed group of exactly 1 (`base === 1 && extra > 0`), stopping as
+soon as it wouldn't (or at `G === 1`). For 19 @ size 2 this drops `G` from 10 to 9, giving
+one group of 3 and eight pairs - nobody alone, and she never has to touch the group-size
+control to get there.
+
+Deliberately scoped to "group size" mode only, NOT "# of groups" mode: an explicit group
+COUNT (e.g. "I have 6 stations") is a structural choice she's making on purpose, so it's
+left exactly as requested even if it produces a small group - silently overriding a
+number she typed in felt like the wrong call, unlike size mode where the count is only
+ever a means to a target size. If she ever wants the same protection in count mode, revisit.
+
+Also correctly leaves alone the two genuinely-intentional cases: a class of 1 present
+student (unavoidable, nothing to rebalance against) and an explicit group size of 1
+(everyone solo on purpose - `extra === 0` in that case, so the "mixed sizes" check never
+fires).
+
+Verified: swept every combination of 1-25 students x group sizes 2-4 in-browser (0
+violations - no run produced a lone student next to bigger groups); spot-checked her exact
+scenario (19 students, size 2) six consecutive re-shuffles, always `[3,2,2,2,2,2,2,2,2]`;
+confirmed size-1 requests and n=1 classes are left untouched; confirmed count mode is
+unaffected (7 students, "6 groups" still gives `[2,1,1,1,1,1]`, unchanged from before).
+No console errors.

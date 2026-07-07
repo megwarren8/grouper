@@ -102,7 +102,19 @@ function generateGroups(students, opts){
 
   let G;
   if (opts.mode === 'count') G = Math.max(1, Math.min(opts.value, n));
-  else G = Math.max(1, Math.ceil(n / Math.max(1, opts.value)));
+  else {
+    G = Math.max(1, Math.ceil(n / Math.max(1, opts.value)));
+    // Never strand exactly one student in their own "group": an even split across G groups
+    // can leave a single short group of size (value - 1), which is only actually alone when
+    // value is 2. Prefer one fewer, slightly bigger group instead - a group of 3 beats a
+    // solo of 1. (Only for size mode; an explicit "# of groups" request is a deliberate
+    // count, e.g. a fixed number of stations, so it's left as asked even if it produces a
+    // small group.)
+    while (G > 1) {
+      const b = Math.floor(n / G), ex = n % G;
+      if (b === 1 && ex > 0) G--; else break;
+    }
+  }
 
   // target capacities, as even as possible
   const base = Math.floor(n / G), extra = n % G;
