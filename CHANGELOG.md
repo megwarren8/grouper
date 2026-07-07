@@ -55,3 +55,49 @@ Six fixes/features, all in `index.html` (single-file app, no build step):
 
 Verified all six in-browser (desktop, 780px narrow, and mobile 375px widths) with no
 console errors before shipping.
+
+## 2026-07-07
+
+Six more, all in `index.html` / `styles.css`:
+
+1. **Tightened side columns.** Sidebar 236px -> 214px, roster 268px -> 242px, giving the
+   groups grid more width. Safe to go narrower than the 2026-07-06 widths because the
+   2-line class-name wrap (from that pass) no longer needs extra width to avoid clipping.
+
+2. **Group card headers decluttered.** Removed the flat 10x10 color-square dot. Member
+   rows un-indented: dropped the leading drag-handle (grip) icon, so avatar/name/role/pin
+   shift left and role labels that were tight on space now have full room. Dragging still
+   works - the grip icon was purely a visual affordance, the row itself is what's
+   `draggable`.
+
+3. **Group number as a badge.** Replaced the plain "GROUP 1" text treatment with a
+   circular number badge styled like the student `Avatar` component (colored circle, bold
+   white number) + a smaller de-emphasized "GROUP" label. Combines with #2: the number
+   badge fills the same visual slot the color-square dot used to occupy.
+
+4. **Same badge treatment in Present/Stage mode**, sized up for projector viewing
+   (`clamp(30px,2.8vw,40px)` circles), replacing the small square dot there too.
+   `--stage-bg` darkened `#1F1535` -> `#120B1F` (near-black, keeps the purple hue) to
+   match the darker chrome she pointed at.
+
+5. **Role switcher on the Present screen ("Rotate roles").** New button (icon: undo/rotate)
+   + `R` keyboard shortcut in Stage's control bar, shown only when Roles is on. Shifts
+   which role each seat in every group holds by one position, round-robin
+   (`RN[(j + roleShift) % RN.length]`), without touching group membership - this is "pass
+   the marker" for BTC classes, or just role rotation for any Roles preset. State
+   (`roleShift`) is local to the Stage component, so it resets each time you re-enter
+   Present (a fresh session starts the rotation over); it does NOT affect the Work view's
+   role display, which stays fixed to the original top-down assignment.
+   NOTE: her request said "roll switcher" - read as "role switcher" given the whole
+   surrounding request is about Roles and her BTC marker-pass ritual (see
+   `dlk-thinking-classrooms-grouper` in Claude's memory). Flagged to her in case that
+   reading is wrong.
+
+6. **Teacher and Term.** New always-visible fields in the sidebar (`TEACHER` / `TERM`,
+   each with its own edit pencil opening a small modal - `RenameModal` generalized with a
+   `title`/`placeholder` prop rather than a new component). Global to the whole app (not
+   per-class), persisted alongside everything else in `localStorage`.
+
+Verified all six in-browser (desktop, 780px narrow, mobile 375px) with no console errors;
+confirmed role rotation via both the button and the `R` key, confirmed `teacherName`/`term`
+round-trip through `localStorage`.

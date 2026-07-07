@@ -300,7 +300,8 @@ function Chip({ tone = 'plain', children, style }){
 const { useState, useRef, useEffect } = React;
 
 /* ---------------- Sidebar: classes ---------------- */
-function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, onDeleteClass, collapsed, onToggleCollapse }){
+function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, onDeleteClass, collapsed, onToggleCollapse,
+                   teacherName, term, onEditTeacher, onEditTerm }){
   if (collapsed){
     return (
       <aside style={{ width:44, flex:'0 0 44px', borderRight:'1px solid var(--line)',
@@ -319,10 +320,24 @@ function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, onDel
     );
   }
   const canDelete = classes.length > 1;
+  const metaRow = (label, value, placeholder, onEdit) => (
+    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+      <span style={{ fontSize:10, fontWeight:700, letterSpacing:'.06em', textTransform:'uppercase',
+        color:'var(--muted)', flex:'0 0 auto' }}>{label}</span>
+      <span style={{ fontSize:12.5, fontWeight:600, color: value ? 'var(--ink-2)' : 'var(--muted)',
+        flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        {value || placeholder}</span>
+      <button className="focusable" onClick={onEdit} aria-label={"Edit " + label.toLowerCase()} title={"Edit " + label.toLowerCase()}
+        style={{ padding:3, borderRadius:6, background:'transparent', border:'none',
+          cursor:'pointer', color:'var(--muted)', display:'flex', alignItems:'center', flex:'0 0 auto' }}>
+        <Icon name="edit" size={12} />
+      </button>
+    </div>
+  );
   return (
-    <aside style={{ width:236, flex:'0 0 236px', borderRight:'1px solid var(--line)',
+    <aside style={{ width:214, flex:'0 0 214px', borderRight:'1px solid var(--line)',
       background:'var(--surface-2)', display:'flex', flexDirection:'column', padding:'16px 12px' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'2px 6px 16px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'2px 6px 14px' }}>
         <div style={{ width:24, height:24, borderRadius:7, background:'var(--ink)', color:'#fff',
           display:'flex', alignItems:'center', justifyContent:'center' }}>
           <Icon name="users" size={14} stroke={2.2} />
@@ -334,6 +349,10 @@ function Sidebar({ classes, activeId, onSelect, onAddClass, onRenameClass, onDel
           style={{ border:'none', background:'transparent', color:'var(--muted)' }}>
           <Icon name="chevLeft" size={15} />
         </button>
+      </div>
+      <div style={{ display:'flex', flexDirection:'column', gap:5, padding:'0 6px 14px' }}>
+        {metaRow('Teacher', teacherName, 'Add name', onEditTeacher)}
+        {metaRow('Term', term, 'Add term', onEditTerm)}
       </div>
       <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.08em', textTransform:'uppercase',
         color:'var(--muted)', padding:'0 6px 8px' }}>Classes</div>
@@ -561,7 +580,7 @@ function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEn
       onDragOver={(e) => { e.preventDefault(); setRosterHot(true); }}
       onDragLeave={() => setRosterHot(false)}
       onDrop={(e) => { e.preventDefault(); setRosterHot(false); onDropRoster(); }}
-      style={{ width: mobile ? '100%' : 268, flex: mobile ? '1 1 auto' : '0 0 268px',
+      style={{ width: mobile ? '100%' : 242, flex: mobile ? '1 1 auto' : '0 0 242px',
         borderRight: mobile ? 'none' : '1px solid var(--line)',
         display:'flex', flexDirection:'column', background: rosterHot ? 'var(--warn-soft)' : 'var(--surface)',
         transition:'background .15s' }}>
@@ -627,11 +646,13 @@ function GroupCard({ idx, members, roles, roleNames, pinned, onPin, freshness, h
         boxShadow:'var(--shadow-sm)', overflow:'hidden', display:'flex', flexDirection:'column',
         outline: hot ? '2px dashed ' + col : 'none', outlineOffset:-2, transition:'outline .12s',
         animationDelay:(idx * 0.04) + 's' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'9px 11px',
+      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 11px',
         background: soft, borderBottom:'1px solid ' + soft }}>
-        <span style={{ width:10, height:10, borderRadius:3, background:col, flex:'0 0 auto' }} />
-        <span style={{ fontFamily:'var(--font-display)', fontSize:12.5, fontWeight:700, color:ink, letterSpacing:'.02em', whiteSpace:'nowrap' }}>
-          GROUP {idx + 1}</span>
+        <span style={{ width:22, height:22, borderRadius:'50%', background:col, color:'#fff', flex:'0 0 auto',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontFamily:'var(--font-display)', fontWeight:700, fontSize:12 }}>{idx + 1}</span>
+        <span style={{ fontFamily:'var(--font-display)', fontSize:11, fontWeight:700, color:ink, letterSpacing:'.06em',
+          textTransform:'uppercase', whiteSpace:'nowrap' }}>Group</span>
         <span style={{ flex:1 }} />
         <span className="chip" style={{ background:'var(--surface)', color: freshness >= 90 ? 'var(--good)' : 'var(--warn)',
           border:'1px solid var(--line)', padding:'3px 7px', fontSize:10.5 }}>{freshness}% new</span>
@@ -649,7 +670,6 @@ function GroupCard({ idx, members, roles, roleNames, pinned, onPin, freshness, h
             onDragEnd={onDragEnd}
             style={{ display:'flex', alignItems:'center', gap:9, padding:'5px 7px', borderRadius:8,
               cursor:'grab', opacity: dragId === s.id ? .35 : 1, animationDelay:(j * 0.03) + 's' }}>
-            <Icon name="grip" size={14} style={{ color:'var(--line-2)' }} />
             <Avatar name={s.name} size={24} color={col} landed={landed} />
             <span style={{ fontSize:13.5, fontWeight:500, flex:1 }}>{s.name}</span>
             {roles && j < RN.length && (
@@ -725,6 +745,18 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
   const low = timer.seconds <= 30 && timer.seconds > 0;
   const done = timer.seconds === 0;
 
+  // Role switcher: "pass the marker" without touching group membership - shifts which role each
+  // seat holds by one, round-robin, for as long as this Present session stays open (resets when
+  // Stage remounts, i.e. next time you enter Present).
+  const [roleShift, setRoleShift] = useState(0);
+  const rotateRoles = () => setRoleShift(s => (s + 1) % RN.length);
+  const roleFor = (j) => RN[(j + roleShift) % RN.length];
+  useEffect(() => {
+    const onKey = (e) => { if (roles && (e.key === 'r' || e.key === 'R')) rotateRoles(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [roles, RN.length]);
+
   return (
     <div className="stage-in" data-stage="yes" style={{ position:'absolute', inset:0, zIndex:50, background:'var(--stage-bg)',
       color:'var(--stage-ink)', display:'flex', flexDirection:'column', fontFamily:'var(--font-ui)' }}>
@@ -766,9 +798,12 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
             <div key={i} className="pop" style={{ borderRadius:20, padding:'16px 22px', display:'flex', flexDirection:'column',
               background:'rgba(255,255,255,.045)', border:'1.5px solid rgba(255,255,255,.12)',
               boxShadow:`inset 3px 0 0 ${col}`, animationDelay:(i * 0.05) + 's', minHeight:0, overflow:'hidden' }}>
-              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12 }}>
-                <span style={{ width:12, height:12, borderRadius:4, background:col }} />
-                <span style={{ fontFamily:'var(--font-display)', fontSize:'clamp(18px,2vw,24px)', fontWeight:700 }}>Group {i + 1}</span>
+              <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
+                <span style={{ width:'clamp(30px,2.8vw,40px)', height:'clamp(30px,2.8vw,40px)', borderRadius:'50%',
+                  background:col, color:'#fff', flex:'0 0 auto', display:'flex', alignItems:'center', justifyContent:'center',
+                  fontFamily:'var(--font-display)', fontWeight:700, fontSize:'clamp(15px,1.4vw,19px)' }}>{i + 1}</span>
+                <span style={{ fontFamily:'var(--font-display)', fontSize:'clamp(13px,1.3vw,16px)', fontWeight:700,
+                  letterSpacing:'.06em', textTransform:'uppercase', color:'color-mix(in oklab, var(--stage-ink) 72%, transparent)' }}>Group</span>
                 <span style={{ flex:1 }} />
                 <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 40%, transparent)' }}>{g.length}</span>
               </div>
@@ -782,7 +817,7 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
                     <span style={{ fontSize:'clamp(17px,1.9vw,26px)', fontWeight:600, letterSpacing:'-.01em', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</span>
                     {pinned && pinned[s.id] && <Icon name="pin" size={13} fill={true} style={{ fill:col, stroke:col, flex:'0 0 auto', opacity:.9 }} />}
                     {roles && j < RN.length && <span style={{ marginLeft:'auto', flex:'0 0 auto', fontFamily:'var(--font-display)', fontSize:'clamp(9px,.85vw,12px)',
-                      fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', textTransform:'uppercase', letterSpacing:'.05em', whiteSpace:'nowrap' }}>{RN[j]}</span>}
+                      fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', textTransform:'uppercase', letterSpacing:'.05em', whiteSpace:'nowrap' }}>{roleFor(j)}</span>}
                   </div>
                 ))}
               </div>
@@ -804,8 +839,15 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
         <button className="focusable" onClick={timerCtl.toggle} style={{ display:'flex', alignItems:'center', gap:9,
           padding:'13px 22px', borderRadius:999, fontSize:15, fontWeight:600, border:'1.5px solid rgba(255,255,255,.22)', color:'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
           <Icon name={timer.running ? 'pause' : 'play'} size={15} /> Timer</button>
+        {roles && (
+          <button className="focusable" onClick={rotateRoles} title="Pass roles to the next student in each group"
+            style={{ display:'flex', alignItems:'center', gap:9, padding:'13px 22px', borderRadius:999, fontSize:15, fontWeight:600,
+              border:'1.5px solid rgba(255,255,255,.22)', color:'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
+            <Icon name="undo" size={15} /> Rotate roles</button>
+        )}
         <div style={{ flex:1 }} />
-        <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 35%, transparent)', letterSpacing:'.05em' }}>SPACE = RE-SHUFFLE · ESC = EXIT</span>
+        <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 35%, transparent)', letterSpacing:'.05em' }}>
+          SPACE = RE-SHUFFLE{roles ? ' · R = ROTATE ROLES' : ''} · ESC = EXIT</span>
       </div>
     </div>
   );
@@ -884,15 +926,15 @@ function AddClassModal({ onCreate, onClose }){
   );
 }
 
-function RenameModal({ initial, onSave, onClose }){
+function RenameModal({ initial, onSave, onClose, title = 'Rename class', placeholder }){
   const [name, setName] = useStateM(initial);
   return (
-    <Modal title="Rename class" onClose={onClose} width={400}
+    <Modal title={title} onClose={onClose} width={400}
       footer={<>
         <button className="btn focusable" onClick={onClose}>Cancel</button>
         <button className="btn primary focusable" onClick={() => name.trim() && onSave(name.trim())}>Save</button>
       </>}>
-      <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
+      <input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={placeholder}
         onKeyDown={(e) => e.key === 'Enter' && name.trim() && onSave(name.trim())} style={inputStyle} />
     </Modal>
   );
@@ -1204,6 +1246,8 @@ function App(){
   const [note, setNote] = uS('Fresh mix - everyone’s with new partners today.');
   const [sidebarCollapsed, setSidebarCollapsed] = uS(() => !!(init.current && init.current.sidebarCollapsed));
   const [rosterCollapsed, setRosterCollapsed] = uS(() => !!(init.current && init.current.rosterCollapsed));
+  const [teacherName, setTeacherName] = uS(() => (init.current && init.current.teacherName) || '');
+  const [term, setTerm] = uS(() => (init.current && init.current.term) || '');
 
   // responsive
   const [vw, setVw] = uS(typeof window !== 'undefined' ? window.innerWidth : 1440);
@@ -1240,12 +1284,12 @@ function App(){
     setSaveStatus('saving');
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const ok = saveState({ classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed });
+      const ok = saveState({ classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed, teacherName, term });
       setSaveStatus(ok ? 'saved' : 'error');
       setLastSavedAt(Date.now());
     }, 300);
     return () => clearTimeout(saveTimer.current);
-  }, [classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed]);
+  }, [classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed, teacherName, term]);
 
   // ---- timer tick ----
   uE(() => {
@@ -1397,7 +1441,9 @@ function App(){
           onAddClass={() => setModal({ type:'add' })}
           onRenameClass={(id) => setModal({ type:'rename', id })}
           onDeleteClass={(id) => setModal({ type:'delete', id })}
-          collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(v => !v)} />
+          collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+          teacherName={teacherName} term={term}
+          onEditTeacher={() => setModal({ type:'teacher' })} onEditTerm={() => setModal({ type:'term' })} />
       )}
 
       <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0 }}>
@@ -1465,6 +1511,14 @@ function App(){
       {modal && modal.type === 'rename' && (
         <RenameModal initial={(classes.find(c => c.id === modal.id) || {}).name || ''} onClose={() => setModal(null)}
           onSave={(name) => { setClasses(cs => cs.map(c => c.id === modal.id ? { ...c, name } : c)); setModal(null); }} />
+      )}
+      {modal && modal.type === 'teacher' && (
+        <RenameModal initial={teacherName} title="Teacher name" placeholder="e.g. Ms. Warren" onClose={() => setModal(null)}
+          onSave={(name) => { setTeacherName(name); setModal(null); }} />
+      )}
+      {modal && modal.type === 'term' && (
+        <RenameModal initial={term} title="Term" placeholder="e.g. Fall 2026" onClose={() => setModal(null)}
+          onSave={(name) => { setTerm(name); setModal(null); }} />
       )}
       {modal && modal.type === 'delete' && classes.find(c => c.id === modal.id) && (
         <DeleteClassModal cls={classes.find(c => c.id === modal.id)}
