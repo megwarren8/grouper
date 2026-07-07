@@ -101,3 +101,50 @@ Six more, all in `index.html` / `styles.css`:
 Verified all six in-browser (desktop, 780px narrow, mobile 375px) with no console errors;
 confirmed role rotation via both the button and the `R` key, confirmed `teacherName`/`term`
 round-trip through `localStorage`.
+
+## 2026-07-07 (later)
+
+Five follow-ups on the same day's pass, all in `index.html`:
+
+1. **Roster narrowed further.** 242px -> 210px, more room for the groups grid again.
+
+2. **Roster "Edit" button is icon-only now** (pencil + `title`/`aria-label` tooltip, no
+   visible "Edit" text) - matches the pattern every other small utility icon in the app
+   already used (Roles-edit pencil, Balance-levels-edit pencil, class-row rename/delete,
+   panel-collapse chevrons). Audited the rest of the app for the same icon+redundant-text
+   pattern before touching anything else: didn't find another instance - everything else
+   with a text label next to an icon is a primary action (Generate/Export/Present/Add
+   class/Add role) or a modal footer button, where keeping the label is the right call, not
+   an oversight.
+
+3. **Fixed the group header word order.** The 2026-07-06 badge redesign put the number
+   badge BEFORE the word "GROUP" (read as "2 Group"). Swapped so the label comes first and
+   the badge sits after it ("GROUP 2"), in both the work-view `GroupCard` and the Present
+   `Stage` header - same fix in both places since both got the badge treatment together
+   last time.
+
+4. **Rotate roles: added backward stepping + an "Edit roles" trigger, reusing the exact
+   editor the setup screen uses.** `rotateRoles()` became `stepRoles(dir)` (`dir` is +1 or
+   -1); UI is now a 3-part pill (back-chevron / Rotate roles / edit-pencil) instead of one
+   button. `Shift+R` steps backward (`R` alone still steps forward). The edit-pencil calls
+   the SAME `onEditRoles` handler the Toolbar's Roles-edit pencil already used
+   (`setModal({type:'roles'})` in App, unchanged) - so it opens the actual
+   `RolesEditorModal` (presets, add/remove/reorder/rename roles, save-as-default) as an
+   overlay on top of Present mode, and any rename saves and reflects immediately in the
+   projected groups. No new editor component; this is 100% reuse.
+   GOTCHA hit while wiring this: the Toolbar's Roles-edit pencil and the new Stage one
+   both have `title="Edit role names"`. The Toolbar's copy stays mounted (just visually
+   covered) while Stage is open, so a CSS-selector-based click can silently land on the
+   WRONG (hidden) one - harmless here since both call the identical handler, but worth
+   remembering next time two same-titled buttons can coexist in the DOM: scope the
+   selector (e.g. query within `[data-stage="yes"]`) rather than a bare global one.
+
+5. **Roster/sidebar widths just kept shrinking each pass** - if she asks again, the
+   remaining lever is letting the groups grid reduce its column count on narrow windows
+   (currently fixed at 4 columns once a class has more than 6 groups, regardless of
+   available width); that's a real pre-existing responsive gap, not something touched in
+   either 2026-07-06 or 2026-07-07, flagged here for whenever it comes up.
+
+Verified in-browser (desktop, 780px narrow) with no console errors; confirmed rotate
+forward/back both work, confirmed the Edit-roles overlay opens correctly over the darkened
+Present background and a rename saves + reflects live in the projected groups.

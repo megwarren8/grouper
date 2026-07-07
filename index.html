@@ -580,7 +580,7 @@ function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEn
       onDragOver={(e) => { e.preventDefault(); setRosterHot(true); }}
       onDragLeave={() => setRosterHot(false)}
       onDrop={(e) => { e.preventDefault(); setRosterHot(false); onDropRoster(); }}
-      style={{ width: mobile ? '100%' : 242, flex: mobile ? '1 1 auto' : '0 0 242px',
+      style={{ width: mobile ? '100%' : 210, flex: mobile ? '1 1 auto' : '0 0 210px',
         borderRight: mobile ? 'none' : '1px solid var(--line)',
         display:'flex', flexDirection:'column', background: rosterHot ? 'var(--warn-soft)' : 'var(--surface)',
         transition:'background .15s' }}>
@@ -588,8 +588,9 @@ function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEn
         <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.07em', textTransform:'uppercase', color:'var(--muted)' }}>
           Roster · tap to toggle</div>
         <div style={{ display:'flex', alignItems:'center', gap:2 }}>
-          <button className="btn ghost sm focusable" onClick={onEdit} style={{ color:'var(--primary)', padding:'4px 7px' }}>
-            <Icon name="edit" size={14} /> Edit
+          <button className="btn icon sm focusable" onClick={onEdit} aria-label="Edit roster" title="Edit roster"
+            style={{ color:'var(--primary)', border:'none', background:'transparent' }}>
+            <Icon name="edit" size={14} />
           </button>
           {!mobile && (
             <button className="btn icon sm focusable" onClick={onToggleCollapse}
@@ -648,11 +649,11 @@ function GroupCard({ idx, members, roles, roleNames, pinned, onPin, freshness, h
         animationDelay:(idx * 0.04) + 's' }}>
       <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 11px',
         background: soft, borderBottom:'1px solid ' + soft }}>
+        <span style={{ fontFamily:'var(--font-display)', fontSize:11, fontWeight:700, color:ink, letterSpacing:'.06em',
+          textTransform:'uppercase', whiteSpace:'nowrap' }}>Group</span>
         <span style={{ width:22, height:22, borderRadius:'50%', background:col, color:'#fff', flex:'0 0 auto',
           display:'flex', alignItems:'center', justifyContent:'center',
           fontFamily:'var(--font-display)', fontWeight:700, fontSize:12 }}>{idx + 1}</span>
-        <span style={{ fontFamily:'var(--font-display)', fontSize:11, fontWeight:700, color:ink, letterSpacing:'.06em',
-          textTransform:'uppercase', whiteSpace:'nowrap' }}>Group</span>
         <span style={{ flex:1 }} />
         <span className="chip" style={{ background:'var(--surface)', color: freshness >= 90 ? 'var(--good)' : 'var(--warn)',
           border:'1px solid var(--line)', padding:'3px 7px', fontSize:10.5 }}>{freshness}% new</span>
@@ -737,7 +738,7 @@ function InsightBar({ stats, note, compact }){
 
 // stage.jsx - Present mode: the same groups, projected big. → window.
 
-function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshuffle, onExit, frozen, setFrozen, shuffling }){
+function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshuffle, onExit, frozen, setFrozen, shuffling, onEditRoles }){
   const n = groups.length;
   const RN = (roleNames && roleNames.length) ? roleNames : ROLES;
   const cols = n <= 2 ? n : n <= 6 ? 3 : 4;
@@ -747,12 +748,17 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
 
   // Role switcher: "pass the marker" without touching group membership - shifts which role each
   // seat holds by one, round-robin, for as long as this Present session stays open (resets when
-  // Stage remounts, i.e. next time you enter Present).
+  // Stage remounts, i.e. next time you enter Present). Step either direction (Shift reverses),
+  // and Edit roles opens the same RolesEditorModal the setup screen uses (App owns that modal, so
+  // this just asks App to open it) - no separate present-mode editor to keep in sync.
   const [roleShift, setRoleShift] = useState(0);
-  const rotateRoles = () => setRoleShift(s => (s + 1) % RN.length);
+  const stepRoles = (dir) => setRoleShift(s => (s + dir + RN.length) % RN.length);
   const roleFor = (j) => RN[(j + roleShift) % RN.length];
   useEffect(() => {
-    const onKey = (e) => { if (roles && (e.key === 'r' || e.key === 'R')) rotateRoles(); };
+    const onKey = (e) => {
+      if (!roles) return;
+      if (e.key === 'r' || e.key === 'R') stepRoles(e.shiftKey ? -1 : 1);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [roles, RN.length]);
@@ -799,11 +805,11 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
               background:'rgba(255,255,255,.045)', border:'1.5px solid rgba(255,255,255,.12)',
               boxShadow:`inset 3px 0 0 ${col}`, animationDelay:(i * 0.05) + 's', minHeight:0, overflow:'hidden' }}>
               <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
+                <span style={{ fontFamily:'var(--font-display)', fontSize:'clamp(13px,1.3vw,16px)', fontWeight:700,
+                  letterSpacing:'.06em', textTransform:'uppercase', color:'color-mix(in oklab, var(--stage-ink) 72%, transparent)' }}>Group</span>
                 <span style={{ width:'clamp(30px,2.8vw,40px)', height:'clamp(30px,2.8vw,40px)', borderRadius:'50%',
                   background:col, color:'#fff', flex:'0 0 auto', display:'flex', alignItems:'center', justifyContent:'center',
                   fontFamily:'var(--font-display)', fontWeight:700, fontSize:'clamp(15px,1.4vw,19px)' }}>{i + 1}</span>
-                <span style={{ fontFamily:'var(--font-display)', fontSize:'clamp(13px,1.3vw,16px)', fontWeight:700,
-                  letterSpacing:'.06em', textTransform:'uppercase', color:'color-mix(in oklab, var(--stage-ink) 72%, transparent)' }}>Group</span>
                 <span style={{ flex:1 }} />
                 <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 40%, transparent)' }}>{g.length}</span>
               </div>
@@ -840,14 +846,23 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
           padding:'13px 22px', borderRadius:999, fontSize:15, fontWeight:600, border:'1.5px solid rgba(255,255,255,.22)', color:'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
           <Icon name={timer.running ? 'pause' : 'play'} size={15} /> Timer</button>
         {roles && (
-          <button className="focusable" onClick={rotateRoles} title="Pass roles to the next student in each group"
-            style={{ display:'flex', alignItems:'center', gap:9, padding:'13px 22px', borderRadius:999, fontSize:15, fontWeight:600,
-              border:'1.5px solid rgba(255,255,255,.22)', color:'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
-            <Icon name="undo" size={15} /> Rotate roles</button>
+          <div style={{ display:'flex', alignItems:'stretch', borderRadius:999, overflow:'hidden',
+            border:'1.5px solid rgba(255,255,255,.22)', color:'color-mix(in oklab, var(--stage-ink) 85%, transparent)' }}>
+            <button className="focusable" onClick={() => stepRoles(-1)} title="Rotate roles back"
+              style={{ display:'flex', alignItems:'center', padding:'0 14px', color:'inherit' }}>
+              <Icon name="chevLeft" size={15} /></button>
+            <button className="focusable" onClick={() => stepRoles(1)} title="Pass roles to the next student in each group (R)"
+              style={{ display:'flex', alignItems:'center', gap:9, padding:'13px 18px', fontSize:15, fontWeight:600, color:'inherit',
+                borderLeft:'1.5px solid rgba(255,255,255,.22)', borderRight:'1.5px solid rgba(255,255,255,.22)' }}>
+              <Icon name="undo" size={15} /> Rotate roles</button>
+            <button className="focusable" onClick={onEditRoles} title="Edit role names"
+              style={{ display:'flex', alignItems:'center', padding:'0 14px', color:'inherit' }}>
+              <Icon name="edit" size={15} /></button>
+          </div>
         )}
         <div style={{ flex:1 }} />
         <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 35%, transparent)', letterSpacing:'.05em' }}>
-          SPACE = RE-SHUFFLE{roles ? ' · R = ROTATE ROLES' : ''} · ESC = EXIT</span>
+          SPACE = RE-SHUFFLE{roles ? ' · R = ROTATE ROLES (SHIFT = BACK)' : ''} · ESC = EXIT</span>
       </div>
     </div>
   );
@@ -1487,7 +1502,8 @@ function App(){
         <Stage cls={cls} groups={groups} roles={config.roles} roleNames={cls.roleNames} pinned={cls.pinned}
           timer={timer} timerCtl={timerCtl}
           onReshuffle={() => regenerate(false)} onExit={() => setView('work')}
-          frozen={frozen} setFrozen={setFrozen} shuffling={shuffling} />
+          frozen={frozen} setFrozen={setFrozen} shuffling={shuffling}
+          onEditRoles={() => setModal({ type:'roles' })} />
       )}
 
       {/* modals */}
