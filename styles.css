@@ -124,6 +124,34 @@ input{font-family:inherit;}
 @keyframes stageIn{from{opacity:0;transform:scale(1.04);}to{opacity:1;transform:none;}}
 .stage-in{animation:stageIn .45s cubic-bezier(.2,.8,.25,1) both;}
 
+/* Present mode on phones and tablets: the layout above is sized for a
+   projector, so on a narrower screen the timer, group labels, and bottom
+   controls were getting cut off at the screen edge instead of reflowing.
+   Grid and control-row fixes cover phone and iPad portrait alike; the
+   top-bar stacking and timer shrink only kick in on phone widths, since
+   the top bar already fits fine at iPad-portrait width. The projector
+   view above 820px is untouched either way. */
+@media (max-width:820px){
+  /* CSS Grid sizes a whole row to its tallest card, and an "auto" row can
+     collapse a flex:1 (flex-basis 0%) child to zero height. Flex-wrap sides
+     steps both problems: every card wraps to its own line at its own
+     natural height, independent of its neighbors. */
+  .stage-grid{display:flex!important;flex-wrap:wrap!important;align-items:flex-start!important;
+    align-content:flex-start!important;
+    padding:6px 14px!important;gap:10px!important;
+    overflow-y:auto!important;-webkit-overflow-scrolling:touch;}
+  .stage-grid>div{overflow:visible!important;flex:0 0 auto!important;width:calc(50% - 5px)!important;}
+  .stage-grid .scroll{flex:1 1 auto!important;}
+  .stage-controls{flex-wrap:wrap!important;padding:12px 14px!important;gap:8px!important;flex:0 0 auto!important;}
+  .stage-kbd-hint,.stage-spacer{display:none!important;}
+}
+@media (max-width:700px){
+  .stage-top{padding:14px 16px 8px!important;grid-template-columns:1fr!important;row-gap:10px!important;justify-items:start!important;}
+  .stage-esc{justify-self:start!important;}
+  .stage-timer{padding:8px 14px!important;gap:10px!important;}
+  .stage-timer-digits{font-size:30px!important;}
+}
+
 /* shuffle spin on icon */
 @keyframes spin{to{transform:rotate(360deg);}}
 .spin{animation:spin .6s ease;}

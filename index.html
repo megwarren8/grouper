@@ -779,18 +779,18 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
     <div className="stage-in" data-stage="yes" style={{ position:'absolute', inset:0, zIndex:50, background:'var(--stage-bg)',
       color:'var(--stage-ink)', display:'flex', flexDirection:'column', fontFamily:'var(--font-ui)' }}>
       {/* top */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', alignItems:'center', padding:'22px 40px 12px' }}>
-        <div style={{ display:'flex', alignItems:'baseline', gap:14 }}>
+      <div className="stage-top" style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', alignItems:'center', padding:'22px 40px 12px' }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:14, flexWrap:'wrap' }}>
           <span style={{ fontFamily:'var(--font-display)', fontSize:26, fontWeight:700, letterSpacing:'-.015em' }}>{cls.name}</span>
           <span style={{ fontFamily:'var(--font-display)', fontSize:13, fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', letterSpacing:'.04em' }}>
             {n} GROUPS · {groups.reduce((a, g) => a + g.length, 0)} STUDENTS</span>
         </div>
         {/* big timer */}
-        <div style={{ display:'flex', alignItems:'center', gap:16, padding:'10px 22px', borderRadius:18,
+        <div className="stage-timer" style={{ display:'flex', alignItems:'center', gap:16, padding:'10px 22px', borderRadius:18,
           border:'2px solid ' + (done ? 'var(--warn)' : low ? 'var(--warn)' : 'rgba(255,255,255,.16)'),
           background: done ? 'rgba(255,170,80,.12)' : 'rgba(255,255,255,.03)' }}>
           <Icon name="clock" size={20} style={{ color: low || done ? 'var(--warn)' : 'color-mix(in oklab, var(--stage-ink) 70%, transparent)' }} />
-          <span style={{ fontFamily:'var(--font-display)', fontSize:44, fontWeight:700, lineHeight:1, letterSpacing:'.01em',
+          <span className="stage-timer-digits" style={{ fontFamily:'var(--font-display)', fontSize:44, fontWeight:700, lineHeight:1, letterSpacing:'.01em',
             color: low || done ? 'var(--warn)' : 'var(--stage-ink)', fontVariantNumeric:'tabular-nums' }}>{fmt(timer.seconds)}</span>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             <button className="focusable" onClick={timerCtl.toggle}
@@ -801,14 +801,14 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
               <Icon name="plus" size={13} /> 1 min</button>
           </div>
         </div>
-        <button className="focusable" onClick={onExit} style={{ justifySelf:'end', display:'flex', alignItems:'center', gap:8,
+        <button className="focusable stage-esc" onClick={onExit} style={{ justifySelf:'end', display:'flex', alignItems:'center', gap:8,
           color:'color-mix(in oklab, var(--stage-ink) 55%, transparent)', fontFamily:'var(--font-display)', fontSize:13, fontWeight:500, letterSpacing:'.04em',
           padding:'8px 12px', borderRadius:10, border:'1px solid rgba(255,255,255,.14)', whiteSpace:'nowrap' }}>
           <Icon name="x" size={15} /> ESC · BACK</button>
       </div>
 
       {/* group grid */}
-      <div style={{ flex:1, display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`,
+      <div className="stage-grid" style={{ flex:1, display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`,
         gridTemplateRows:`repeat(${rows}, 1fr)`, gap:16, padding:'6px 40px', minHeight:0 }}>
         {groups.map((g, i) => {
           const col = groupGlow(i);
@@ -845,7 +845,7 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
       </div>
 
       {/* controls */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12, padding:'18px 40px' }}>
+      <div className="stage-controls" style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12, padding:'18px 40px' }}>
         <button className="focusable" onClick={onReshuffle} style={{ display:'flex', alignItems:'center', gap:10,
           padding:'13px 26px', borderRadius:999, background:'var(--stage-ink)', color:'var(--stage-bg)', fontWeight:700, fontSize:16 }}>
           <Icon name="shuffle" size={18} style={shuffling ? { animation:'spin .6s ease' } : null} /> Re-shuffle</button>
@@ -872,8 +872,8 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
               <Icon name="edit" size={15} /></button>
           </div>
         )}
-        <div style={{ flex:1 }} />
-        <span style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 35%, transparent)', letterSpacing:'.05em' }}>
+        <div className="stage-spacer" style={{ flex:1 }} />
+        <span className="stage-kbd-hint" style={{ fontFamily:'var(--font-display)', fontSize:12, color:'color-mix(in oklab, var(--stage-ink) 35%, transparent)', letterSpacing:'.05em' }}>
           SPACE = RE-SHUFFLE{roles ? ' · R = ROTATE ROLES (SHIFT = BACK)' : ''} · ESC = EXIT</span>
       </div>
     </div>
@@ -898,7 +898,7 @@ function Modal({ title, sub, onClose, children, footer, width = 460 }){
           <button className="btn icon sm focusable" onClick={onClose} style={{ border:'none' }}><Icon name="x" size={16} /></button>
         </div>
         <div className="scroll" style={{ padding:20, flex:1, minHeight:0 }}>{children}</div>
-        {footer && <div style={{ display:'flex', gap:10, justifyContent:'flex-end', padding:'14px 20px', borderTop:'1px solid var(--line)', background:'var(--surface-2)' }}>{footer}</div>}
+        {footer && <div style={{ display:'flex', gap:10, justifyContent:'flex-end', flexWrap:'wrap', padding:'14px 20px', borderTop:'1px solid var(--line)', background:'var(--surface-2)' }}>{footer}</div>}
       </div>
     </div>
   );
