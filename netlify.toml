@@ -1,0 +1,8 @@
+# Grouper now lives at grouper.megan-warren.com (Cloudflare Pages). This
+# repo's old Netlify site (grouper-warren.netlify.app) forwards here so any
+# old bookmark or shared link still lands in the right place.
+[[redirects]]
+  from = "/*"
+  to = "https://grouper.megan-warren.com/:splat"
+  status = 301
+  force = true
