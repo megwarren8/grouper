@@ -35,7 +35,7 @@
 // engine.js - data, storage, and the group-generation algorithm. Plain JS → window.
 
 // ---- group colors (oklch, harmonious; 12 hues, configurable via setGroupCfg) ----
-const GROUP_HUES = [192, 300, 330, 25, 122, 262, 55, 210, 152, 282, 92, 352];
+const GROUP_HUES = [25, 55, 88, 122, 152, 178, 200, 232, 262, 292, 322, 352];
 let GCFG = { chroma: 0.145, mono: false };
 const setGroupCfg = (cfg) => { GCFG = { ...GCFG, ...cfg }; };
 const NH = GROUP_HUES.length;
@@ -886,7 +886,7 @@ const { useState: useStateM } = React;
 
 function Modal({ title, sub, onClose, children, footer, width = 460 }){
   return (
-    <div onClick={onClose} style={{ position:'fixed', inset:0, zIndex:200, background:'color-mix(in oklab, #1F1535 40%, transparent)',
+    <div onClick={onClose} style={{ position:'fixed', inset:0, zIndex:200, background:'color-mix(in oklab, #211d18 40%, transparent)',
       display:'flex', alignItems:'center', justifyContent:'center', padding:24, animation:'fadeIn .15s ease' }}>
       <div onClick={(e) => e.stopPropagation()} className="scaleIn" style={{ width, maxWidth:'100%', maxHeight:'88vh',
         background:'var(--surface)', borderRadius:'var(--r-lg)', boxShadow:'var(--shadow-lg)',
@@ -1175,14 +1175,14 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
     w.document.write(`<!doctype html><html><head><title>${cls.name} - groups</title>
       <style>
         *{box-sizing:border-box;font-family:'Schibsted Grotesk',-apple-system,Segoe UI,system-ui,sans-serif;}
-        body{margin:32px;color:#1F1535;}
-        h1{font-size:20px;margin:0 0 2px;} .sub{color:#6E5AA8;font-size:13px;margin-bottom:20px;}
+        body{margin:32px;color:#211d18;}
+        h1{font-size:20px;margin:0 0 2px;} .sub{color:#8d8576;font-size:13px;margin-bottom:20px;}
         .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-        .g{border:1px solid #E3D6EC;border-radius:10px;padding:12px 14px;break-inside:avoid;}
+        .g{border:1px solid #d8d0c1;border-radius:10px;padding:12px 14px;break-inside:avoid;}
         .gh{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
         .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
         ol{margin:0;padding-left:18px;} li{margin:3px 0;font-size:14px;}
-        .r{color:#6E5AA8;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-left:4px;}
+        .r{color:#8d8576;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-left:4px;}
         @media print{@page{margin:1.4cm;}}
       </style></head><body>
       <h1>${cls.name}</h1><div class="sub">${groups.length} groups · ${dateStr}</div>
@@ -1228,11 +1228,12 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
 // app.jsx - orchestrator: state, generation, drag, timer, present mode, tweaks.
 const { useState: uS, useEffect: uE, useRef: uR } = React;
 
-// Values are oklch(l c h). "Plum" is locked as the app default (see TWEAK_DEFAULTS below) and is
-// tuned to the brand's Tiffany teal #2BB7B3, darkened to a text-safe "ink" (l lower than the pure
-// accent) since --primary doubles as button text/border color, not just a background fill.
+// Values are oklch(l c h). "Plum" is locked as the app default (see TWEAK_DEFAULTS below).
+// Reverted 2026-07-22 to the original warm-palette primary (more readable than the
+// violet/teal rebrand) since --primary doubles as button text/border color, not just a
+// background fill.
 const ACCENTS = [
-  { name:'Plum',       l:0.50, c:0.086, h:192.6 },
+  { name:'Plum',       l:0.52, c:0.17,  h:276 },
   { name:'Teal',       l:0.56, c:0.10,  h:192 },
   { name:'Orchid',     l:0.58, c:0.13,  h:330 },
   { name:'Periwinkle', l:0.56, c:0.15,  h:284 },
