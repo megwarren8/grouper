@@ -475,7 +475,7 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
               style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:700, letterSpacing:'-.01em',
                 border:'none', background:'transparent', color:'var(--ink)', padding:'0 18px 0 0', maxWidth:'46vw',
                 appearance:'none', WebkitAppearance:'none', cursor:'pointer',
-                backgroundImage:'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 fill=%27none%27 stroke=%27%238d8576%27 stroke-width=%272.5%27><path d=%27M3 4.5l3 3 3-3%27/></svg>")',
+                backgroundImage:'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 fill=%27none%27 stroke=%27%2382768D%27 stroke-width=%272.5%27><path d=%27M3 4.5l3 3 3-3%27/></svg>")',
                 backgroundRepeat:'no-repeat', backgroundPosition:'right center' }}>
               {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -886,7 +886,7 @@ const { useState: useStateM } = React;
 
 function Modal({ title, sub, onClose, children, footer, width = 460 }){
   return (
-    <div onClick={onClose} style={{ position:'fixed', inset:0, zIndex:200, background:'color-mix(in oklab, #211d18 40%, transparent)',
+    <div onClick={onClose} style={{ position:'fixed', inset:0, zIndex:200, background:'color-mix(in oklab, #1F1535 40%, transparent)',
       display:'flex', alignItems:'center', justifyContent:'center', padding:24, animation:'fadeIn .15s ease' }}>
       <div onClick={(e) => e.stopPropagation()} className="scaleIn" style={{ width, maxWidth:'100%', maxHeight:'88vh',
         background:'var(--surface)', borderRadius:'var(--r-lg)', boxShadow:'var(--shadow-lg)',
@@ -1175,14 +1175,14 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
     w.document.write(`<!doctype html><html><head><title>${cls.name} - groups</title>
       <style>
         *{box-sizing:border-box;font-family:'Schibsted Grotesk',-apple-system,Segoe UI,system-ui,sans-serif;}
-        body{margin:32px;color:#211d18;}
-        h1{font-size:20px;margin:0 0 2px;} .sub{color:#8d8576;font-size:13px;margin-bottom:20px;}
+        body{margin:32px;color:#1F1535;}
+        h1{font-size:20px;margin:0 0 2px;} .sub{color:#82768D;font-size:13px;margin-bottom:20px;}
         .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
         .g{border:1px solid #d8d0c1;border-radius:10px;padding:12px 14px;break-inside:avoid;}
         .gh{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
         .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
         ol{margin:0;padding-left:18px;} li{margin:3px 0;font-size:14px;}
-        .r{color:#8d8576;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-left:4px;}
+        .r{color:#82768D;font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-left:4px;}
         @media print{@page{margin:1.4cm;}}
       </style></head><body>
       <h1>${cls.name}</h1><div class="sub">${groups.length} groups · ${dateStr}</div>

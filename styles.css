@@ -9,9 +9,9 @@
   --bg:#f4f1ea;
   --surface:#fffdf9;
   --surface-2:#faf7f0;
-  --ink:#211d18;
-  --ink-2:#4a4439;
-  --muted:#8d8576;
+  --ink:#1F1535; /* deep plum/ink, not brown (2026-07-22): darkness unchanged, hue shifted cool */
+  --ink-2:#4A3F6E;
+  --muted:#82768D; /* same lightness/saturation as the old warm muted, hue rotated to plum; contrast against --bg actually improved (3.24 -> 3.78) */
   --line:#e6dfd2;
   --line-2:#d8d0c1;
   --fill:#e4ded2; /* neutral "not yet grouped" avatar dot, blooms to its group color once a shuffle lands */
@@ -26,7 +26,7 @@
   --warn:oklch(0.62 0.14 55);
   --warn-soft:oklch(0.95 0.045 70);
 
-  --stage-bg:#1a1815;
+  --stage-bg:#120B1F; /* deep plum/near-black, not brown (2026-07-22) */
   --stage-ink:#f3efe6;
 
   --r-sm:8px; --r-md:12px; --r-lg:18px; --r-xl:24px;
