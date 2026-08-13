@@ -14,6 +14,12 @@
 </head>
 <body>
 <div id="root"></div>
+<!-- Static, outside the React root on purpose: it renders even if the app
+     never mounts, and it is the only link home this page has. -->
+<footer style="max-width:1100px;margin:0 auto;padding:18px 20px 28px;font-size:13px;line-height:1.6;opacity:.72;text-align:center;">
+  &copy; 2026 Megan Warren. All rights reserved. Built by Megan Warren in Boston, who takes
+  <a href="https://megan-warren.com/software/" target="_blank" rel="noopener">custom classroom software commissions</a>.
+</footer>
 
 <!-- React + Babel bundled locally in vendor/ so this works fully offline (no internet ever needed). -->
 <script src="vendor/react.production.min.js"></script>
