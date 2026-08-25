@@ -223,8 +223,91 @@ function loadState(){
   return null;
 }
 function saveState(state){
-  try{ localStorage.setItem(SKEY, JSON.stringify(state)); return true; }catch(e){ return false; }
+  // savedAt rides along inside the payload so a later load can say honestly WHEN it was
+  // saved, instead of the header assuming "just now" for a write it did not make.
+  try{ localStorage.setItem(SKEY, JSON.stringify({ ...state, savedAt: Date.now() })); return true; }catch(e){ return false; }
 }
+
+// uid() hands out s1, s2, ... from a counter that restarts at 1 on every page load. Any state
+// that came from storage or a backup file already owns ids minted in a previous run, so the
+// counter has to be pushed past them. Skip this and the next student added gets an id that a
+// student already has: duplicate React keys, and drag, pin, and keep-apart rules all acting on
+// whichever of the two they find first.
+function adoptUids(classes){
+  let max = 0;
+  for (const c of (classes || []))
+    for (const s of (c.students || [])){
+      const m = /^s(\d+)$/.exec(s && s.id || '');
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+  if (max >= _id) _id = max + 1;
+
+  // Repair state saved while the collision above was live. Two students in one class sharing an
+  // id read as ONE person to React keys, drag, pinning, and the keep-apart rules - the roster
+  // says 17 while the groups only ever show 16. Give the later holder a fresh id; the pairing
+  // history stays with the first, which is the best available answer since the two were
+  // indistinguishable until now. Scoped per class on purpose: ids repeating ACROSS classes are
+  // harmless (history, pinned and rules are all per class), so repairing those would orphan
+  // history in classes that were never broken.
+  let repaired = 0;
+  for (const c of (classes || [])){
+    const seen = new Set();
+    for (const s of (c.students || [])){
+      if (!s) continue;
+      if (!s.id || seen.has(s.id)){ s.id = uid(); repaired++; }
+      seen.add(s.id);
+    }
+  }
+  if (repaired) console.warn('Grouper: repaired ' + repaired + ' duplicated student id(s) in saved data.');
+  return repaired;
+}
+
+// ---- snapshots: named restore points, THIS BROWSER ONLY (a backup file is the real copy) ----
+const SNAPKEY = 'rgg.snapshots.v1';
+const SNAP_MAX = 10;
+function loadSnapshots(){
+  try{ const v = JSON.parse(localStorage.getItem(SNAPKEY) || '[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; }
+}
+function saveSnapshots(list){
+  try{ localStorage.setItem(SNAPKEY, JSON.stringify(list)); return true; }catch(e){ return false; }
+}
+
+// ---- backup file: the only copy that survives losing this browser ----
+const BACKUP_APP = 'grouper';
+const BACKUP_FORMAT = 1;
+function buildBackup(state){
+  return JSON.stringify({ app: BACKUP_APP, formatVersion: BACKUP_FORMAT, savedAt: new Date().toISOString(), state }, null, 2);
+}
+// Returns the state, or throws an Error whose message is written to be shown to the user as-is.
+// Deliberately strict: a half-readable file restored over a term of real rosters is worse than
+// a refusal that says why.
+function parseBackup(text){
+  let obj;
+  try{ obj = JSON.parse(text); }catch(e){ throw new Error('That file is not a Grouper backup - it is not readable as JSON.'); }
+  if (!obj || obj.app !== BACKUP_APP) throw new Error('That file was not written by Grouper.');
+  if (typeof obj.formatVersion === 'number' && obj.formatVersion > BACKUP_FORMAT)
+    throw new Error('That backup came from a newer version of Grouper than this one, so it cannot be read here.');
+  const st = obj.state;
+  if (!st || !Array.isArray(st.classes)) throw new Error('That backup is missing its list of classes.');
+  if (!st.classes.length) throw new Error('That backup has no classes in it.');
+  st.classes.forEach((c, i) => {
+    if (!c || typeof c.name !== 'string' || !Array.isArray(c.students))
+      throw new Error('Class ' + (i + 1) + ' in that backup is missing its name or its roster.');
+  });
+  return st;
+}
+const stateSummary = (st) => {
+  const cs = (st && st.classes) || [];
+  const n = cs.reduce((a, c) => a + ((c.students || []).length), 0);
+  return cs.length + (cs.length === 1 ? ' class' : ' classes') + ' · ' + n + (n === 1 ? ' student' : ' students');
+};
+const stampStr = (ms) => {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const today = new Date().toDateString() === d.toDateString();
+  const t = d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+  return today ? t : d.toLocaleDateString(undefined, { month:'short', day:'numeric' }) + ', ' + t;
+};
 
 // components.jsx - shared UI atoms (icons, avatar, toggle, chip). → window.
 
@@ -253,6 +336,7 @@ const I = {
   plusBig:'M12 4v16M4 12h16',
   flame:'M12 22a7 7 0 0 0 7-7c0-3-2-5-3.5-7.5C14 5 14 3 12 2c0 3-2 4.5-3.5 6.5S5 12 5 15a7 7 0 0 0 7 7z',
   download:'M12 3v11M8 10.5l4 4 4-4M5 20h14',
+  upload:'M12 15V4M8 7.5l4-4 4 4M5 20h14',
   copy:'M9 9h10v10H9zM5 15V5h10',
   printer:'M7 8V3h10v5M7 16H5a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v7H7z',
 };
@@ -457,7 +541,7 @@ function TimerPill({ timer, onToggle, onAdd, onReset, big }){
 /* ---------------- Toolbar ---------------- */
 function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, timer, timerCtl,
                    onRules, onEditRoles, onEditLevels, presentN, totalN, shuffling, onRename,
-                   mobile, classes, activeId, onSelectClass, saveStatus, lastSavedAt }){
+                   mobile, classes, activeId, onSelectClass, saveStatus, lastSavedAt, onOpenSave }){
   return (
     <>
       <header style={{ minHeight:60, flex:'0 0 auto', borderBottom:'1px solid var(--line)',
@@ -504,7 +588,7 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
         <button className="btn focusable" onClick={onExport} title="Export groups">
           <Icon name="download" size={15} /> {mobile ? '' : 'Export'}
         </button>
-        <SaveIndicator status={saveStatus} at={lastSavedAt} />
+        <SaveIndicator status={saveStatus} at={lastSavedAt} onClick={onOpenSave} />
         <button className="btn dark focusable" onClick={onPresent}>
           <Icon name="present" size={15} /> Present
         </button>
@@ -549,21 +633,23 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
 }
 
 /* ---------------- Save indicator ---------------- */
-function SaveIndicator({ status, at }){
+function SaveIndicator({ status, at, onClick }){
   const label = status === 'saving' ? 'Saving…' : status === 'error' ? 'Not saved' : 'Saved';
   const color = status === 'error' ? 'var(--warn)' : status === 'saving' ? 'var(--muted)' : 'var(--good)';
-  const timeStr = at ? new Date(at).toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' }) : '';
   const tip = status === 'error'
-    ? 'This browser could not save your changes (storage full or blocked). Changes may be lost if you close the tab.'
+    ? 'This browser could not save your changes (storage full or blocked). Click for backups and snapshots.'
     : status === 'saving' ? 'Saving to this browser…'
-    : at ? `All changes saved to this browser at ${timeStr}. This device only - nothing leaves the page.` : 'All changes saved to this browser.';
+    : (at ? `Saved to this browser at ${stampStr(at)}. This device only.` : 'Saved to this browser. This device only.')
+      + ' Click to back up to a file, or take a snapshot.';
   return (
-    <span title={tip} style={{ display:'flex', alignItems:'center', gap:6, fontSize:11.5, fontWeight:600,
-      color, padding:'0 4px', whiteSpace:'nowrap' }}>
+    <button className="focusable" onClick={onClick} title={tip} aria-label={label + ' - open saving and backups'}
+      style={{ display:'flex', alignItems:'center', gap:6, fontSize:11.5, fontWeight:600, color,
+        padding:'4px 6px', whiteSpace:'nowrap', border:'none', background:'transparent',
+        borderRadius:8, cursor:'pointer' }}>
       <span style={{ width:7, height:7, borderRadius:'50%', background:color, flex:'0 0 auto',
         animation: status === 'saving' ? 'pulseDot 1s ease-in-out infinite' : 'none' }} />
       {label}
-    </span>
+    </button>
   );
 }
 
@@ -1222,6 +1308,188 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
   );
 }
 
+/* ---------------- Saving & backups ----------------
+   Three different promises, kept visually separate on purpose because they protect against
+   three different things:
+     - autosave / Save now : this browser. Protects against closing the tab.
+     - snapshots           : this browser. Protects against your own edits.
+     - backup file         : anywhere.     Protects against losing the browser. The only real copy.
+   Restores are two-step (arm, then confirm) rather than window.confirm, so the thing being
+   replaced is named on screen while you decide. */
+function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreState,
+                     onAddSnapshot, onDeleteSnapshot, summary, onClose }){
+  const [snapName, setSnapName] = useStateM('');
+  const [armed, setArmed] = useStateM(null);      // id of the snapshot awaiting confirm
+  const [pending, setPending] = useStateM(null);  // state parsed from a file, awaiting confirm
+  const [err, setErr] = useStateM('');
+  const [flash, setFlash] = useStateM('');
+  const fileRef = React.useRef(null);
+
+  const say = (m) => { setFlash(m); setErr(''); setTimeout(() => setFlash(''), 2200); };
+  const fail = (m) => { setErr(m); setFlash(''); };
+
+  const pickFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = ''; // let the same file be picked again after a failed read
+    if (!f) return;
+    const r = new FileReader();
+    r.onerror = () => fail('That file could not be read off the disk.');
+    r.onload = () => {
+      try { setPending({ state: parseBackup(String(r.result)), name: f.name }); setErr(''); }
+      catch (ex) { setPending(null); fail(ex.message); }
+    };
+    r.readAsText(f);
+  };
+
+  const addSnap = () => {
+    const nm = snapName.trim() || ('Snapshot ' + stampStr(Date.now()));
+    const res = onAddSnapshot(nm);
+    if (res === true){ setSnapName(''); say('Snapshot “' + nm + '” saved.'); }
+    else fail(res || 'This browser refused to store the snapshot (storage is probably full). Save to a file instead.');
+  };
+
+  const rowStyle = { display:'flex', alignItems:'center', gap:10, padding:'9px 10px', borderRadius:10,
+    border:'1px solid var(--line-2)', background:'var(--surface-2)' };
+
+  return (
+    <Modal title="Saving & backups" sub={summary} onClose={onClose} width={540}
+      footer={<button className="btn primary focusable" onClick={onClose}>Done</button>}>
+
+      {/* 1. this browser */}
+      <Label style={{ marginBottom:7 }}>This browser</Label>
+      <div style={{ ...rowStyle, marginBottom:6 }}>
+        <span style={{ width:8, height:8, borderRadius:'50%', flex:'0 0 auto',
+          background: status === 'error' ? 'var(--warn)' : 'var(--good)' }} />
+        <span style={{ fontSize:13, flex:1, minWidth:0 }}>
+          {status === 'error'
+            ? 'This browser could not save. Your changes are only in this tab.'
+            : at ? 'Saved automatically at ' + stampStr(at) : 'Saved automatically.'}
+        </span>
+        <button className="btn sm focusable" onClick={() => { onSaveNow() ? say('Saved.') : fail('This browser refused to save. Storage may be full or blocked.'); }}>
+          <Icon name="check" size={14} /> Save now
+        </button>
+      </div>
+      <div style={{ fontSize:12, color:'var(--muted)', marginBottom:18, lineHeight:1.55 }}>
+        Grouper saves every change here on its own, about a third of a second after you stop.
+        There has never been a Save button to miss. But “here” means this one browser on this one
+        computer: clear its data, switch machines, or leave the site alone for a week and it can go.
+        A file is the only copy that outlives it.
+      </div>
+
+      {/* 2. the file */}
+      <Label style={{ marginBottom:7 }}>Backup file</Label>
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
+        <button className="btn focusable" onClick={() => { onDownload(); say('Backup downloaded. Move it to ~/Documents/Grouper Backups.'); }}>
+          <Icon name="download" size={15} /> Save to file
+        </button>
+        <button className="btn focusable" onClick={() => fileRef.current && fileRef.current.click()}>
+          <Icon name="upload" size={15} /> Load from file
+        </button>
+        <input ref={fileRef} type="file" accept="application/json,.json" onChange={pickFile} style={{ display:'none' }} />
+      </div>
+      <div style={{ fontSize:12, color:'var(--muted)', marginBottom: pending || err ? 10 : 18, lineHeight:1.55 }}>
+        Everything: all classes, rosters, levels, rules, role names, teacher, term, and pairing
+        history. Keep it in ~/Documents/Grouper Backups, and load it to move your setup to another
+        computer.
+      </div>
+
+      {err && (
+        <div style={{ ...rowStyle, marginBottom:18, borderColor:'var(--warn)', background:'var(--warn-soft)', alignItems:'flex-start' }}>
+          <span style={{ fontSize:13, color:'var(--warn)', lineHeight:1.5 }}>{err}</span>
+        </div>
+      )}
+
+      {pending && (
+        <div style={{ ...rowStyle, marginBottom:18, display:'block', borderColor:'var(--primary)', background:'var(--primary-soft)' }}>
+          <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>
+            <b>{pending.name}</b> holds {stateSummary(pending.state)}.<br />
+            Loading it replaces everything currently in this browser ({summary}). That cannot be undone.
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button className="btn sm focusable" onClick={() => { setPending(null); setErr(''); }}>Cancel</button>
+            <button className="btn sm focusable" onClick={() => {
+              const r = onAddSnapshot('Before loading ' + pending.name);
+              r === true ? say('Snapshot of the current setup taken.')
+                         : fail(r || 'Could not store a snapshot first. Use Save to file instead, then load.');
+            }}>
+              Snapshot current first
+            </button>
+            <button className="btn sm primary focusable" onClick={() => { onRestoreState(pending.state); setPending(null); onClose(); }}>
+              Replace everything
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. snapshots */}
+      <Label style={{ marginBottom:7 }}>Snapshots <span style={{ textTransform:'none', letterSpacing:0, fontWeight:500 }}>({snapshots.length}/{SNAP_MAX})</span></Label>
+      <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+        <input value={snapName} onChange={(e) => setSnapName(e.target.value)}
+          placeholder="Name this snapshot, e.g. Trimester 1 rosters"
+          onKeyDown={(e) => e.key === 'Enter' && snapshots.length < SNAP_MAX && addSnap()}
+          style={{ ...inputStyle, flex:1 }} />
+        <button className="btn focusable" onClick={addSnap} disabled={snapshots.length >= SNAP_MAX}
+          style={snapshots.length >= SNAP_MAX ? { opacity:.5, cursor:'not-allowed' } : {}}>
+          <Icon name="plus" size={15} /> Save
+        </button>
+      </div>
+      {snapshots.length >= SNAP_MAX && (
+        <div style={{ fontSize:12, color:'var(--warn)', marginBottom:10 }}>
+          Ten is the limit, so this stays well inside what a browser will store. Delete one to add another.
+        </div>
+      )}
+
+      {snapshots.length === 0 ? (
+        <div style={{ fontSize:12.5, color:'var(--muted)', lineHeight:1.55 }}>
+          No snapshots yet. Take one before you paste over a roster or reshuffle a set of groups
+          you liked, and you can step back to it.
+        </div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+          {snapshots.map(s => (
+            <div key={s.id} style={{ ...rowStyle, flexWrap:'wrap', rowGap:8 }}>
+              <div style={{ flex:1, minWidth:150 }}>
+                <div style={{ fontSize:13.5, fontWeight:600 }}>{s.name}</div>
+                <div style={{ fontSize:11.5, color:'var(--muted)' }}>{stampStr(s.savedAt)} · {stateSummary(s.state)}</div>
+              </div>
+              {armed === s.id ? (
+                <div style={{ display:'flex', gap:6 }}>
+                  <button className="btn sm focusable" onClick={() => setArmed(null)}>Cancel</button>
+                  <button className="btn sm primary focusable"
+                    onClick={() => { onRestoreState(s.state); setArmed(null); onClose(); }}>Replace everything</button>
+                </div>
+              ) : (
+                <div style={{ display:'flex', gap:2 }}>
+                  <button className="btn sm focusable" onClick={() => { setArmed(s.id); setErr(''); }}>
+                    <Icon name="undo" size={14} /> Restore
+                  </button>
+                  <button className="btn icon sm focusable" title={'Delete snapshot “' + s.name + '”'}
+                    aria-label={'Delete snapshot ' + s.name}
+                    onClick={() => onDeleteSnapshot(s.id)}
+                    style={{ border:'none', background:'transparent', color:'var(--muted)' }}>
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize:12, color:'var(--muted)', marginTop:10, lineHeight:1.55 }}>
+        Snapshots live in this browser too, so they undo your edits, not a lost browser.
+      </div>
+
+      {flash && (
+        <div style={{ marginTop:14, fontSize:12.5, fontWeight:600, color:'var(--good)',
+          display:'flex', alignItems:'center', gap:6 }}>
+          <Icon name="check" size={14} /> {flash}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+
 // app.jsx - orchestrator: state, generation, drag, timer, present mode, tweaks.
 const { useState: uS, useEffect: uE, useRef: uR } = React;
 
@@ -1261,6 +1529,11 @@ function App(){
 
   // ---- core state ----
   const init = uR(loadState());
+  // Restored state carries ids from a previous run; push the uid counter past them before any
+  // new student can be minted with an id somebody already has. Runs exactly once - it mutates
+  // the loaded classes in place, and must finish before useState reads them below.
+  const repaired = uR(null);
+  if (repaired.current === null) repaired.current = init.current ? adoptUids(init.current.classes) : 0;
   const [classes, setClasses] = uS(() => (init.current && init.current.classes) || defaultClasses());
   // Open on the first class (Block A). This used to open on classes[1], which was only
   // ever right for the old demo seed, where the second class was the showcase one.
@@ -1306,20 +1579,92 @@ function App(){
   // persisted. Writes are debounced 300ms so a drag or a burst of typing collapses into one save
   // and one status flash instead of spamming localStorage and flickering "Saving..." nonstop.
   const [saveStatus, setSaveStatus] = uS('saved'); // 'saved' | 'saving' | 'error'
-  const [lastSavedAt, setLastSavedAt] = uS(() => Date.now());
+  // Read the real timestamp out of the saved payload. Defaulting to Date.now() made the header
+  // claim it had just saved a state it had only just READ.
+  const [lastSavedAt, setLastSavedAt] = uS(() => (init.current && init.current.savedAt) || null);
+  const [snapshots, setSnapshots] = uS(() => loadSnapshots());
   const saveTimer = uR(null);
   const skipFirstSave = uR(true);
+  // One definition of "everything worth keeping", used by the autosave, Save now, snapshots,
+  // and the backup file, so they can never drift apart into saving different subsets.
+  const currentState = () => ({ classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed, teacherName, term });
+  const saveNow = () => {
+    const ok = saveState(currentState());
+    setSaveStatus(ok ? 'saved' : 'error');
+    setLastSavedAt(Date.now());
+    return ok;
+  };
   uE(() => {
-    if (skipFirstSave.current){ skipFirstSave.current = false; return; } // don't flash "Saving..." for the initial load
+    if (skipFirstSave.current){
+      skipFirstSave.current = false;
+      // A first visit has nothing in storage yet, so write once rather than let the header say
+      // "Saved" about a write that never happened. Still no "Saving..." flash - the user did not
+      // cause this one. Also write when ids were just repaired, or the repair is redone from
+      // scratch on every load and the replacement ids drift each session.
+      if (!init.current || repaired.current) saveNow();
+      return;
+    }
     setSaveStatus('saving');
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const ok = saveState({ classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed, teacherName, term });
+      const ok = saveState(currentState());
       setSaveStatus(ok ? 'saved' : 'error');
       setLastSavedAt(Date.now());
     }, 300);
     return () => clearTimeout(saveTimer.current);
   }, [classes, activeId, config, defaultRoles, sidebarCollapsed, rosterCollapsed, teacherName, term]);
+
+  // ---- restore / snapshots / backup file ----
+  // regenerate() closes over the CURRENT cls, so calling it inside applyState would group the
+  // roster we just replaced. Flag it and let an effect run it on the next render instead, or the
+  // grid keeps showing groups built from students who no longer exist.
+  const needsRegen = uR(false);
+  const applyState = (st) => {
+    if (!st || !Array.isArray(st.classes) || !st.classes.length) return;
+    needsRegen.current = true;
+    adoptUids(st.classes);
+    setClasses(st.classes);
+    setActiveId(st.classes.some(c => c.id === st.activeId) ? st.activeId : st.classes[0].id);
+    if (st.config) setConfig(st.config);
+    if (Array.isArray(st.defaultRoles) && st.defaultRoles.length) setDefaultRoles(st.defaultRoles.slice());
+    setTeacherName(st.teacherName != null ? st.teacherName : DEFAULT_TEACHER);
+    setTerm(st.term != null ? st.term : DEFAULT_TERM);
+  };
+  const addSnapshot = (name) => {
+    if (snapshots.length >= SNAP_MAX) return 'Ten snapshots is the limit. Delete one first.';
+    const next = [{ id:'k' + Date.now(), name, savedAt: Date.now(), state: currentState() }, ...snapshots];
+    if (!saveSnapshots(next)) return null; // caller shows the storage-full message
+    setSnapshots(next);
+    return true;
+  };
+  const deleteSnapshot = (id) => {
+    const next = snapshots.filter(s => s.id !== id);
+    setSnapshots(next);
+    saveSnapshots(next);
+  };
+  const downloadBackup = () => {
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const blob = new Blob([buildBackup(currentState())], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Grouper backup ' + stamp + '.json';
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  // Cmd/Ctrl+S saves and shows the receipt. Without this the browser eats the shortcut with its
+  // own Save Page dialog, which is exactly the wrong answer in an app that autosaves silently.
+  uE(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')){
+        e.preventDefault();
+        saveNow();
+        if (view !== 'stage') setModal({ type:'save' });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   // ---- timer tick ----
   uE(() => {
@@ -1374,6 +1719,13 @@ function App(){
 
   // auto (re)generate on class / generation-config change - no commit
   uE(() => { regenerate(false); /* eslint-disable-next-line */ }, [activeId, config.mode, config.value, config.avoidRecent, config.balance]);
+
+  // Rebuild the grid after a snapshot or backup-file restore (see needsRegen above).
+  uE(() => {
+    if (!needsRegen.current) return;
+    needsRegen.current = false;
+    regenerate(false);
+  });
 
   // ---- drag move ----
   const moveTo = (targetIdx) => {
@@ -1484,6 +1836,7 @@ function App(){
           presentN={presentN} totalN={cls.students.length} shuffling={shuffling}
           onRename={() => setModal({ type:'rename', id: cls.id })}
           mobile={mobile} classes={classes} activeId={activeId} onSelectClass={setActiveId}
+          onOpenSave={() => setModal({ type:'save' })}
           saveStatus={saveStatus} lastSavedAt={lastSavedAt} />
 
         {mobile ? (
@@ -1532,8 +1885,15 @@ function App(){
         <RosterEditorModal cls={cls} onClose={() => setModal(null)} onSave={(names) => {
           setClasses(cs => cs.map(c => {
             if (c.id !== cls.id) return c;
-            const existing = c.students;
-            const students = names.map(nm => existing.find(s => s.name === nm) || { id: uid(), name: nm, present:true, level: 1 + Math.floor(Math.random()*3) });
+            // Take from a shrinking pool rather than find()ing the same object twice: two students
+            // with the same first name (Jack and Jack) both matched the FIRST Jack, collapsing two
+            // people onto one id and one roster row.
+            const pool = c.students.slice();
+            const students = names.map(nm => {
+              const i = pool.findIndex(s => s.name === nm);
+              return i >= 0 ? pool.splice(i, 1)[0]
+                            : { id: uid(), name: nm, present:true, level: 1 + Math.floor(Math.random()*3) };
+            });
             return { ...c, students };
           }));
           setModal(null);
@@ -1586,6 +1946,12 @@ function App(){
       )}
       {modal && modal.type === 'export' && (
         <ExportModal cls={cls} groups={groups} roleNames={cls.roleNames} rolesOn={config.roles} onClose={() => setModal(null)} />
+      )}
+      {modal && modal.type === 'save' && (
+        <SaveModal status={saveStatus} at={lastSavedAt} snapshots={snapshots} summary={stateSummary({ classes })}
+          onSaveNow={saveNow} onDownload={downloadBackup} onRestoreState={applyState}
+          onAddSnapshot={addSnapshot} onDeleteSnapshot={deleteSnapshot}
+          onClose={() => setModal(null)} />
       )}
     </div>
   );
