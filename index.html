@@ -58,42 +58,30 @@ const uid = () => 's' + (_id++);
 // exports/print, or anywhere a student could see it - it's set and read only in Work-view teacher UI.
 const mkStudents = (names) => names.map(n => ({ id: uid(), name: n, present: true, level: 1 + Math.floor(Math.random() * 3) }));
 
-// Period 3 - the user's real roster from the spreadsheet.
-const P3 = ['Kyle','Matthew','Sammie','Simone','Leila','Zoey','Ty','Kate','Grace',
-            'Cooper','El','Aaron','Cesi','Niko','Phoebe','Catherine','Lauren','Diego','Mara'];
-const POOL_A = ['Ava','Liam','Noah','Emma','Olivia','Mason','Sophia','Ethan','Isabella','Lucas',
-                'Mia','Amir','Chloe','Jaden','Harper','Owen','Layla','Wyatt','Nora','Eli',
-                'Ruby','Theo','Iris','Malik','Stella','June','Hugo','Priya','Dax','Yusuf','Greta'];
-const POOL_B = ['Quinn','Reza','Tess','Marco','Indra','Sol','Bex','Cyrus','Wren','Otto',
-                'Hana','Beau','Vera','Kofi','Lena','Rafa','Suki','Milo','Dara','Pax',
-                'Esme','Nik','Talia','Oren'];
-
-function seedHistory(students, sessions){
-  let h = {};
-  for (let s = 0; s < sessions; s++){
-    const g = generateGroups(students, { mode:'size', value:3 + (s % 2), avoidRecent:true, history:h });
-    h = commitHistory(g, h);
-  }
-  return h;
-}
+// ---- Megan's own defaults (teacher, term, and her three blocks) ----
+// Rosters here are PLACEHOLDERS on purpose: this file ships to a public repo and a public
+// site, so no real student name belongs in it. Paste each real roster in the app (Edit
+// roster); it is saved to that browser's localStorage only, never back into this file.
+const DEFAULT_TEACHER = 'Mrs. Warren';
+const DEFAULT_TERM = 'Fall 2026 Trimester';
+const placeholderRoster = (n) => Array.from({ length: n }, (_, i) => 'Student ' + (i + 1));
 
 function defaultClasses(){
+  // Counts match her Fall 2026 enrollment: A 17, B 15, D 6.
   const cs = [
-    { id:'c1', name:'Period 1 · Biology',   students: mkStudents(POOL_A.slice(0,28)) },
-    { id:'c2', name:'Period 3 · Biology',   students: mkStudents(P3) },
-    { id:'c3', name:'Period 4 · Chemistry', students: mkStudents(POOL_B) },
-    { id:'c4', name:'Period 6 · AP Bio',    students: mkStudents(POOL_A.slice(8,27)) },
+    { id:'c1', name:'Block A · Trig (Honors)', students: mkStudents(placeholderRoster(17)) },
+    { id:'c2', name:'Block B · Trig',          students: mkStudents(placeholderRoster(15)) },
+    { id:'c3', name:'Block D · Discrete',      students: mkStudents(placeholderRoster(6))  },
   ];
   for (const c of cs){
-    c.history = seedHistory(c.students, 3 + Math.floor(Math.random() * 3));
+    // Clean slate, same shape a user-added class gets: no seeded pairing history (fake
+    // history would make "% unique pairings this term" report meetings that never
+    // happened) and no sample keep-apart / keep-together rules.
+    c.history = {};
     c.keepApart = []; c.keepTogether = [];
     c.roleNames = [...ROLES];
     c.pinned = {};
   }
-  // a couple of sample rules on Period 3 so the feature is visible
-  const p3 = cs[1].students;
-  cs[1].keepApart = [[p3[9].id, p3[13].id]]; // Cooper ✕ Niko
-  cs[1].keepTogether = [[p3[4].id, p3[8].id]]; // Leila + Grace
   return cs;
 }
 
@@ -479,7 +467,10 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
           {mobile ? (
             <select value={activeId} onChange={(e) => onSelectClass(e.target.value)}
               style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:700, letterSpacing:'-.01em',
-                border:'none', background:'transparent', color:'var(--ink)', padding:'0 18px 0 0', maxWidth:'46vw',
+                border:'none', background:'transparent', color:'var(--ink)', padding:'0 18px 0 0',
+                // 46vw clipped mid-word once class names got longer than the old "Period 1 · Biology"
+                // seed; the header row wraps anyway, so there is room. Ellipsis so it degrades cleanly.
+                maxWidth:'70vw', textOverflow:'ellipsis',
                 appearance:'none', WebkitAppearance:'none', cursor:'pointer',
                 backgroundImage:'url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 fill=%27none%27 stroke=%27%2382768D%27 stroke-width=%272.5%27><path d=%27M3 4.5l3 3 3-3%27/></svg>")',
                 backgroundRepeat:'no-repeat', backgroundPosition:'right center' }}>
@@ -1271,7 +1262,9 @@ function App(){
   // ---- core state ----
   const init = uR(loadState());
   const [classes, setClasses] = uS(() => (init.current && init.current.classes) || defaultClasses());
-  const [activeId, setActiveId] = uS(() => (init.current && init.current.activeId) || (classes[1] ? classes[1].id : classes[0].id));
+  // Open on the first class (Block A). This used to open on classes[1], which was only
+  // ever right for the old demo seed, where the second class was the showcase one.
+  const [activeId, setActiveId] = uS(() => (init.current && init.current.activeId) || classes[0].id);
   const [config, setConfig] = uS(() => (init.current && init.current.config) || { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true });
   const [defaultRoles, setDefaultRoles] = uS(() => (init.current && Array.isArray(init.current.defaultRoles) && init.current.defaultRoles.length) ? init.current.defaultRoles.slice() : [...ROLES]);
   const [groupIds, setGroupIds] = uS([]);
@@ -1281,8 +1274,10 @@ function App(){
   const [note, setNote] = uS('Fresh mix - everyone’s with new partners today.');
   const [sidebarCollapsed, setSidebarCollapsed] = uS(() => !!(init.current && init.current.sidebarCollapsed));
   const [rosterCollapsed, setRosterCollapsed] = uS(() => !!(init.current && init.current.rosterCollapsed));
-  const [teacherName, setTeacherName] = uS(() => (init.current && init.current.teacherName) || '');
-  const [term, setTerm] = uS(() => (init.current && init.current.term) || '');
+  const [teacherName, setTeacherName] = uS(() =>
+    (init.current && init.current.teacherName != null) ? init.current.teacherName : DEFAULT_TEACHER);
+  const [term, setTerm] = uS(() =>
+    (init.current && init.current.term != null) ? init.current.term : DEFAULT_TERM);
 
   // responsive
   const [vw, setVw] = uS(typeof window !== 'undefined' ? window.innerWidth : 1440);
