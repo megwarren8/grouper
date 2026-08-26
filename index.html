@@ -66,6 +66,8 @@ const DEFAULT_TEACHER = 'Mrs. Warren';
 const DEFAULT_TERM = 'Fall 2026 Trimester';
 const placeholderRoster = (n) => Array.from({ length: n }, (_, i) => 'Student ' + (i + 1));
 
+const DEFAULT_CONFIG = { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true };
+
 function defaultClasses(){
   // Counts match her Fall 2026 enrollment: A 17, B 15, D 6.
   const cs = [
@@ -1317,10 +1319,11 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
    Restores are two-step (arm, then confirm) rather than window.confirm, so the thing being
    replaced is named on screen while you decide. */
 function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreState,
-                     onAddSnapshot, onDeleteSnapshot, summary, onClose }){
+                     onAddSnapshot, onDeleteSnapshot, onStartFresh, summary, onClose }){
   const [snapName, setSnapName] = useStateM('');
   const [armed, setArmed] = useStateM(null);      // id of the snapshot awaiting confirm
   const [pending, setPending] = useStateM(null);  // state parsed from a file, awaiting confirm
+  const [freshArmed, setFreshArmed] = useStateM(false);
   const [err, setErr] = useStateM('');
   const [flash, setFlash] = useStateM('');
   const fileRef = React.useRef(null);
@@ -1479,6 +1482,41 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
         Snapshots live in this browser too, so they undo your edits, not a lost browser.
       </div>
 
+      {/* 4. start fresh - the only destructive control, kept next to the backup tools on purpose */}
+      <div style={{ borderTop:'1px solid var(--line)', margin:'18px 0 0', paddingTop:16 }}>
+        <Label style={{ marginBottom:7 }}>Start fresh</Label>
+        {freshArmed ? (
+          <div style={{ ...rowStyle, display:'block', borderColor:'var(--warn)', background:'var(--warn-soft)' }}>
+            <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>
+              This replaces everything in this browser ({summary}) with the built-in classes:
+              Block A · Trig (Honors), Block B · Trig, and Block D · Discrete, with placeholder
+              rosters.<br />
+              {snapshots.length > 0
+                ? <>Your {snapshots.length === 1 ? 'snapshot is' : snapshots.length + ' snapshots are'} kept, so you can step back.</>
+                : <>You have no snapshots, so save to a file first if you want a way back.</>}
+            </div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <button className="btn sm focusable" onClick={() => setFreshArmed(false)}>Cancel</button>
+              <button className="btn sm focusable" onClick={() => { onDownload(); say('Backup downloaded first.'); }}>
+                <Icon name="download" size={14} /> Save to file first
+              </button>
+              <button className="btn sm primary focusable"
+                onClick={() => { onStartFresh(); setFreshArmed(false); onClose(); }}>Reset to defaults</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <button className="btn focusable" onClick={() => { setFreshArmed(true); setErr(''); }}>
+              <Icon name="undo" size={15} /> Start fresh
+            </button>
+            <div style={{ fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.55 }}>
+              Clears this browser back to the built-in classes. Use it at the start of a term, or to
+              pick up defaults that changed since you first opened Grouper.
+            </div>
+          </>
+        )}
+      </div>
+
       {flash && (
         <div style={{ marginTop:14, fontSize:12.5, fontWeight:600, color:'var(--good)',
           display:'flex', alignItems:'center', gap:6 }}>
@@ -1538,7 +1576,7 @@ function App(){
   // Open on the first class (Block A). This used to open on classes[1], which was only
   // ever right for the old demo seed, where the second class was the showcase one.
   const [activeId, setActiveId] = uS(() => (init.current && init.current.activeId) || classes[0].id);
-  const [config, setConfig] = uS(() => (init.current && init.current.config) || { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true });
+  const [config, setConfig] = uS(() => (init.current && init.current.config) || { ...DEFAULT_CONFIG });
   const [defaultRoles, setDefaultRoles] = uS(() => (init.current && Array.isArray(init.current.defaultRoles) && init.current.defaultRoles.length) ? init.current.defaultRoles.slice() : [...ROLES]);
   const [groupIds, setGroupIds] = uS([]);
   const [view, setView] = uS('work');
@@ -1641,6 +1679,14 @@ function App(){
     const next = snapshots.filter(s => s.id !== id);
     setSnapshots(next);
     saveSnapshots(next);
+  };
+  // Start fresh: back to the built-in defaults. Deliberately does NOT touch snapshots - they are
+  // the undo for exactly this, and wiping them would make the one destructive button in the app
+  // the only one you cannot walk back.
+  const startFresh = () => {
+    const cs = defaultClasses();
+    applyState({ classes: cs, activeId: cs[0].id, config: { ...DEFAULT_CONFIG },
+      defaultRoles: [...ROLES], teacherName: DEFAULT_TEACHER, term: DEFAULT_TERM });
   };
   const downloadBackup = () => {
     const d = new Date();
@@ -1950,7 +1996,7 @@ function App(){
       {modal && modal.type === 'save' && (
         <SaveModal status={saveStatus} at={lastSavedAt} snapshots={snapshots} summary={stateSummary({ classes })}
           onSaveNow={saveNow} onDownload={downloadBackup} onRestoreState={applyState}
-          onAddSnapshot={addSnapshot} onDeleteSnapshot={deleteSnapshot}
+          onAddSnapshot={addSnapshot} onDeleteSnapshot={deleteSnapshot} onStartFresh={startFresh}
           onClose={() => setModal(null)} />
       )}
     </div>
