@@ -1,1 +1,6 @@
 .DS_Store
+
+# Megan's real class rosters. NEVER commit: this repo is public and auto-deploys
+# to grouper.megan-warren.com. The app falls back to placeholder classes when this
+# file is absent, which is exactly what the public site should show.
+roster.local.json

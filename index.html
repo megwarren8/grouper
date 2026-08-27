@@ -68,7 +68,24 @@ const placeholderRoster = (n) => Array.from({ length: n }, (_, i) => 'Student ' 
 
 const DEFAULT_CONFIG = { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true };
 
+// Set once before render, from roster.local.json if that file is sitting next to this one.
+// That file is gitignored AND excluded from publish.sh, so it never reaches GitHub or the
+// public site: Megan's own copy boots with her real classes, grouper.megan-warren.com keeps
+// the placeholders below. Same format a "Save to file" backup writes, so replacing it at the
+// trimester switch is a rename, not an edit.
+let LOCAL_DEFAULTS = null;
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const localPart = (k) => (LOCAL_DEFAULTS && LOCAL_DEFAULTS[k] != null) ? clone(LOCAL_DEFAULTS[k]) : null;
+const defaultConfig = () => localPart('config') || { ...DEFAULT_CONFIG };
+const defaultRoleNames = () => localPart('defaultRoles') || [...ROLES];
+const defaultTeacher = () => { const v = localPart('teacherName'); return v != null ? v : DEFAULT_TEACHER; };
+const defaultTerm = () => { const v = localPart('term'); return v != null ? v : DEFAULT_TERM; };
+
 function defaultClasses(){
+  // Cloned every call: Start fresh can run twice in a session, and handing back the same
+  // objects the second time would return a roster the first reset had already mutated.
+  const local = localPart('classes');
+  if (local && local.length){ adoptUids(local); return local; }
   // Counts match her Fall 2026 enrollment: A 17, B 15, D 6.
   const cs = [
     { id:'c1', name:'Block A · Trig (Honors)', students: mkStudents(placeholderRoster(17)) },
@@ -1546,8 +1563,7 @@ const ACCENTS = [
 const TWEAK_DEFAULTS = {
   "accent": "Plum",
   "groupStyle": "vibrant",
-  "timerMinutes": 5,
-  "defaultGroupSize": 2
+  "timerMinutes": 5
 };
 
 function App(){
@@ -1576,8 +1592,8 @@ function App(){
   // Open on the first class (Block A). This used to open on classes[1], which was only
   // ever right for the old demo seed, where the second class was the showcase one.
   const [activeId, setActiveId] = uS(() => (init.current && init.current.activeId) || classes[0].id);
-  const [config, setConfig] = uS(() => (init.current && init.current.config) || { ...DEFAULT_CONFIG });
-  const [defaultRoles, setDefaultRoles] = uS(() => (init.current && Array.isArray(init.current.defaultRoles) && init.current.defaultRoles.length) ? init.current.defaultRoles.slice() : [...ROLES]);
+  const [config, setConfig] = uS(() => (init.current && init.current.config) || defaultConfig());
+  const [defaultRoles, setDefaultRoles] = uS(() => (init.current && Array.isArray(init.current.defaultRoles) && init.current.defaultRoles.length) ? init.current.defaultRoles.slice() : defaultRoleNames());
   const [groupIds, setGroupIds] = uS([]);
   const [view, setView] = uS('work');
   const [shuffling, setShuffling] = uS(false);
@@ -1586,9 +1602,9 @@ function App(){
   const [sidebarCollapsed, setSidebarCollapsed] = uS(() => !!(init.current && init.current.sidebarCollapsed));
   const [rosterCollapsed, setRosterCollapsed] = uS(() => !!(init.current && init.current.rosterCollapsed));
   const [teacherName, setTeacherName] = uS(() =>
-    (init.current && init.current.teacherName != null) ? init.current.teacherName : DEFAULT_TEACHER);
+    (init.current && init.current.teacherName != null) ? init.current.teacherName : defaultTeacher());
   const [term, setTerm] = uS(() =>
-    (init.current && init.current.term != null) ? init.current.term : DEFAULT_TERM);
+    (init.current && init.current.term != null) ? init.current.term : defaultTerm());
 
   // responsive
   const [vw, setVw] = uS(typeof window !== 'undefined' ? window.innerWidth : 1440);
@@ -1685,8 +1701,8 @@ function App(){
   // the only one you cannot walk back.
   const startFresh = () => {
     const cs = defaultClasses();
-    applyState({ classes: cs, activeId: cs[0].id, config: { ...DEFAULT_CONFIG },
-      defaultRoles: [...ROLES], teacherName: DEFAULT_TEACHER, term: DEFAULT_TERM });
+    applyState({ classes: cs, activeId: cs[0].id, config: defaultConfig(),
+      defaultRoles: defaultRoleNames(), teacherName: defaultTeacher(), term: defaultTerm() });
   };
   const downloadBackup = () => {
     const d = new Date();
@@ -1722,8 +1738,13 @@ function App(){
   // sync timer length with tweak when not running
   uE(() => { setTimer(tm => tm.running ? tm : { seconds: t.timerMinutes * 60, running:false, initial: t.timerMinutes * 60 }); }, [t.timerMinutes]);
 
-  // default group size tweak drives the stepper when in size mode
-  uE(() => { setConfig(c => c.mode === 'size' && c.value !== t.defaultGroupSize ? { ...c, value: t.defaultGroupSize } : c); }, [t.defaultGroupSize]);
+  // REMOVED: an effect here forced config.value to TWEAK_DEFAULTS.defaultGroupSize on mount.
+  // It was left over from the design tool's live Tweaks panel, where the number really could
+  // change at runtime. Once that panel was locked to constants the effect could only ever fire
+  // once, on mount, and its sole remaining behaviour was to overwrite the group size that had
+  // just been restored from storage. Set the stepper to 4, reload, and it silently came back 2 -
+  // the group size has never persisted. It also clobbered roster.local.json's config.
+  // The default now comes from DEFAULT_CONFIG, or from the local defaults file when present.
 
   const timerCtl = {
     toggle: () => setTimer(tm => (tm.seconds === 0 ? { ...tm, seconds: tm.initial, running:true } : { ...tm, running: !tm.running })),
@@ -2003,7 +2024,28 @@ function App(){
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+// Resolve roster.local.json BEFORE the first render, so defaultClasses() can stay synchronous
+// inside useState. Absent file, file:// origin, or a 404 that serves an HTML page all mean
+// "no local defaults" and fall through to the placeholders. A file that IS there but unreadable
+// is shouted about rather than silently ignored, because a silent fallback here looks identical
+// to success and she would teach from the wrong roster.
+(async () => {
+  try {
+    const r = await fetch('roster.local.json', { cache:'no-store' });
+    if (r.ok){
+      const text = await r.text();
+      if (text.trim().startsWith('{')){
+        try {
+          LOCAL_DEFAULTS = parseBackup(text);
+          console.info('Grouper: local defaults loaded from roster.local.json (' + stateSummary(LOCAL_DEFAULTS) + ').');
+        } catch (e) {
+          console.error('Grouper: roster.local.json is present but unusable, falling back to placeholder classes. ' + e.message);
+        }
+      }
+    }
+  } catch (e) { /* no local file, or opened over file:// - placeholders are correct */ }
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+})();
 
 </script>
 </body>
