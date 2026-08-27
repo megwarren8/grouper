@@ -50,7 +50,16 @@ const groupSoft  = (i) => GCFG.mono ? `oklch(0.93 0 0)` : `oklch(0.95 ${GCFG.chr
 const groupInk   = (i) => GCFG.mono ? `oklch(0.40 0 0)` : `oklch(0.45 ${GCFG.chroma} ${GROUP_HUES[i % NH]})`;
 const groupGlow  = (i) => GCFG.mono ? `oklch(${0.62 + (i % 4) * 0.075} 0 0)` : `oklch(0.66 ${GCFG.chroma * 1.1} ${GROUP_HUES[i % NH]})`;
 
+// ROLES stays the Classic list: it is the generic fallback for a class that somehow has no
+// roleNames, and the 'Classic' entry in the roles-editor presets.
 const ROLES = ['Lead', 'Recorder', 'Reporter', 'Materials', 'Timekeeper'];
+// Building Thinking Classrooms: one marker holder per group of 3, the silent scribe who writes
+// only what others say. Defined once here and referenced by the roles-editor preset list so the
+// two cannot drift apart.
+const BTC_ROLES = ['Marker holder (silent scribe)', 'Speaker', 'Speaker'];
+// What a brand-new class and a fresh install start with. Megan teaches BTC in threes, so that
+// is the app default now, placeholder rosters included.
+const DEFAULT_ROLE_NAMES = BTC_ROLES;
 
 let _id = 1;
 const uid = () => 's' + (_id++);
@@ -66,7 +75,7 @@ const DEFAULT_TEACHER = 'Mrs. Warren';
 const DEFAULT_TERM = 'Fall 2026 Trimester';
 const placeholderRoster = (n) => Array.from({ length: n }, (_, i) => 'Student ' + (i + 1));
 
-const DEFAULT_CONFIG = { mode:'size', value: 2, avoidRecent:true, balance:false, roles:true };
+const DEFAULT_CONFIG = { mode:'size', value: 3, avoidRecent:true, balance:false, roles:true };
 
 // Set once before render, from roster.local.json if that file is sitting next to this one.
 // That file is gitignored AND excluded from publish.sh, so it never reaches GitHub or the
@@ -77,7 +86,7 @@ let LOCAL_DEFAULTS = null;
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const localPart = (k) => (LOCAL_DEFAULTS && LOCAL_DEFAULTS[k] != null) ? clone(LOCAL_DEFAULTS[k]) : null;
 const defaultConfig = () => localPart('config') || { ...DEFAULT_CONFIG };
-const defaultRoleNames = () => localPart('defaultRoles') || [...ROLES];
+const defaultRoleNames = () => localPart('defaultRoles') || [...DEFAULT_ROLE_NAMES];
 const defaultTeacher = () => { const v = localPart('teacherName'); return v != null ? v : DEFAULT_TEACHER; };
 const defaultTerm = () => { const v = localPart('term'); return v != null ? v : DEFAULT_TERM; };
 
@@ -98,7 +107,7 @@ function defaultClasses(){
     // happened) and no sample keep-apart / keep-together rules.
     c.history = {};
     c.keepApart = []; c.keepTogether = [];
-    c.roleNames = [...ROLES];
+    c.roleNames = [...DEFAULT_ROLE_NAMES];
     c.pinned = {};
   }
   return cs;
@@ -1153,13 +1162,11 @@ function RolesEditorModal({ cls, onSave, onSaveAsDefault, onClose }){
   const add = () => setRoles(rs => [...rs, 'New role']);
   const cleanRoles = () => roles.map(r => r.trim()).filter(Boolean);
   const PRESETS = {
-    'Classic': ['Lead','Recorder','Reporter','Materials','Timekeeper'],
+    'Classic': [...ROLES],
     'Discussion': ['Facilitator','Note-taker','Skeptic','Summarizer'],
     'Lab': ['Director','Materials','Data','Safety'],
     'Jigsaw': ['Expert A','Expert B','Expert C','Expert D'],
-    // Building Thinking Classrooms: one marker holder per group of 3, the silent scribe who writes only
-    // what others say; everyone else speaks and passes the marker to whoever's turn it is.
-    'BTC': ['Marker holder (silent scribe)','Speaker','Speaker'],
+    'BTC': [...BTC_ROLES],
   };
   return (
     <Modal title="Roles for this class" sub="Name the jobs each group member takes on. Assigned top-down when Roles is on."
