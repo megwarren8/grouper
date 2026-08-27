@@ -669,14 +669,21 @@ function SaveIndicator({ status, at, onClick }){
     : status === 'saving' ? 'Saving to this browser…'
     : (at ? `Saved to this browser at ${stampStr(at)}. This device only.` : 'Saved to this browser. This device only.')
       + ' Click to back up to a file, or take a snapshot.';
+  // Looks like a button on purpose. It was styled as bare coloured text, which is exactly what a
+  // passive status label looks like, so nobody clicked it - and every backup control, including
+  // Load from file, lives behind it. The word "Backups" carries the discovery; the dot and the
+  // status word still carry the state.
   return (
-    <button className="focusable" onClick={onClick} title={tip} aria-label={label + ' - open saving and backups'}
-      style={{ display:'flex', alignItems:'center', gap:6, fontSize:11.5, fontWeight:600, color,
-        padding:'4px 6px', whiteSpace:'nowrap', border:'none', background:'transparent',
-        borderRadius:8, cursor:'pointer' }}>
+    <button className="btn sm focusable" onClick={onClick} title={tip}
+      aria-label={label + ' - open saving and backups'}
+      style={{ display:'flex', alignItems:'center', gap:7, whiteSpace:'nowrap' }}>
       <span style={{ width:7, height:7, borderRadius:'50%', background:color, flex:'0 0 auto',
         animation: status === 'saving' ? 'pulseDot 1s ease-in-out infinite' : 'none' }} />
-      {label}
+      <span style={{ fontSize:11.5, fontWeight:600, color }}>{label}</span>
+      <span style={{ opacity:.35 }}>|</span>
+      <span style={{ display:'flex', alignItems:'center', gap:4 }}>
+        <Icon name="download" size={13} /> Backups
+      </span>
     </button>
   );
 }
