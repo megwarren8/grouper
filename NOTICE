@@ -1,0 +1,21 @@
+Grouper
+Copyright (c) 2026 Megan Warren
+
+This project is MIT licensed (see LICENSE).
+
+Third-party code redistributed in vendor/:
+
+  React and React-DOM
+  Copyright (c) Meta Platforms, Inc. and affiliates
+  MIT License. https://github.com/facebook/react/blob/main/LICENSE
+
+  Babel (babel.min.js)
+  Copyright (c) 2014-present Sebastian McKenzie and other contributors
+  MIT License. https://github.com/babel/babel/blob/main/LICENSE
+
+Typefaces bundled under vendor/fonts/:
+
+  Crimson Pro and Schibsted Grotesk
+  SIL Open Font License 1.1. https://openfontlicense.org
+  The OFL covers the font files only. It does not apply to this project's
+  own code, and it does not restrict what you build with Grouper.
