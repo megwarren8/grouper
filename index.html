@@ -40,15 +40,16 @@
 <script type="text/babel">
 // engine.js - data, storage, and the group-generation algorithm. Plain JS → window.
 
-// ---- group colors (oklch, harmonious; 12 hues, configurable via setGroupCfg) ----
+// ---- group colors (oklch, harmonious; 12 hues) ----
+// Chroma is fixed "vibrant" (0.145) - the mono/soft/design-tool Tweaks-panel variants this used
+// to support via a runtime-configurable GCFG singleton were never exposed in the shipped app.
 const GROUP_HUES = [25, 55, 88, 122, 152, 178, 200, 232, 262, 292, 322, 352];
-let GCFG = { chroma: 0.145, mono: false };
-const setGroupCfg = (cfg) => { GCFG = { ...GCFG, ...cfg }; };
+const GROUP_CHROMA = 0.145;
 const NH = GROUP_HUES.length;
-const groupColor = (i) => GCFG.mono ? `oklch(${0.60 + (i % 4) * 0.075} 0 0)` : `oklch(0.70 ${GCFG.chroma} ${GROUP_HUES[i % NH]})`;
-const groupSoft  = (i) => GCFG.mono ? `oklch(0.93 0 0)` : `oklch(0.95 ${GCFG.chroma * 0.32} ${GROUP_HUES[i % NH]})`;
-const groupInk   = (i) => GCFG.mono ? `oklch(0.40 0 0)` : `oklch(0.45 ${GCFG.chroma} ${GROUP_HUES[i % NH]})`;
-const groupGlow  = (i) => GCFG.mono ? `oklch(${0.62 + (i % 4) * 0.075} 0 0)` : `oklch(0.66 ${GCFG.chroma * 1.1} ${GROUP_HUES[i % NH]})`;
+const groupColor = (i) => `oklch(0.70 ${GROUP_CHROMA} ${GROUP_HUES[i % NH]})`;
+const groupSoft  = (i) => `oklch(0.95 ${GROUP_CHROMA * 0.32} ${GROUP_HUES[i % NH]})`;
+const groupInk   = (i) => `oklch(0.45 ${GROUP_CHROMA} ${GROUP_HUES[i % NH]})`;
+const groupGlow  = (i) => `oklch(0.66 ${GROUP_CHROMA * 1.1} ${GROUP_HUES[i % NH]})`;
 
 // ROLES stays the Classic list: it is the generic fallback for a class that somehow has no
 // roleNames, and the 'Classic' entry in the roles-editor presets.
@@ -1618,39 +1619,14 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
 // app.jsx - orchestrator: state, generation, drag, timer, present mode, tweaks.
 const { useState: uS, useEffect: uE, useRef: uR } = React;
 
-// Values are oklch(l c h). "Plum" is locked as the app default (see TWEAK_DEFAULTS below).
-// Reverted 2026-07-22 to the original warm-palette primary (more readable than the
-// violet/teal rebrand) since --primary doubles as button text/border color, not just a
-// background fill.
-const ACCENTS = [
-  { name:'Plum',       l:0.52, c:0.17,  h:276 },
-  { name:'Teal',       l:0.56, c:0.10,  h:192 },
-  { name:'Orchid',     l:0.58, c:0.13,  h:330 },
-  { name:'Periwinkle', l:0.56, c:0.15,  h:284 },
-  { name:'Indigo',     l:0.50, c:0.18,  h:272 },
-];
-
-const TWEAK_DEFAULTS = {
-  "accent": "Plum",
-  "groupStyle": "vibrant",
-  "timerMinutes": 5
-};
+// The app shipped with one fixed accent ("Plum") and one fixed group-color style ("vibrant") -
+// styles.css already declares --primary/--primary-press/--primary-soft at these exact Plum
+// values, so there is nothing left for JS to choose between or apply at runtime. This used to be
+// a 5-option accent picker plus a mono/soft/vibrant group-style switch, wired to a design tool's
+// live Tweaks panel that no longer exists in the shipped app.
+const TIMER_MINUTES_DEFAULT = 5;
 
 function App(){
-  const t = TWEAK_DEFAULTS; // locked choices (was the design tool's live Tweaks panel)
-
-  // apply group color style every render (module-level cfg)
-  setGroupCfg(t.groupStyle === 'mono' ? { mono:true } : { mono:false, chroma: t.groupStyle === 'soft' ? 0.085 : 0.145 });
-
-  // apply accent CSS vars
-  uE(() => {
-    const a = ACCENTS.find(x => x.name === t.accent) || ACCENTS[0];
-    const r = document.documentElement.style;
-    r.setProperty('--primary', `oklch(${a.l} ${a.c} ${a.h})`);
-    r.setProperty('--primary-press', `oklch(${a.l - 0.06} ${a.c} ${a.h})`);
-    r.setProperty('--primary-soft', `oklch(0.95 ${a.c * 0.22} ${a.h})`);
-  }, [t.accent]);
-
   // ---- core state ----
   const init = uR(loadState());
   // Restored state carries ids from a previous run; push the uid counter past them before any
@@ -1701,7 +1677,7 @@ function App(){
   const [modal, setModal] = uS(null);
 
   // timer
-  const [timer, setTimer] = uS({ seconds: t.timerMinutes * 60, running:false, initial: t.timerMinutes * 60 });
+  const [timer, setTimer] = uS({ seconds: TIMER_MINUTES_DEFAULT * 60, running:false, initial: TIMER_MINUTES_DEFAULT * 60 });
 
   const cls = classes.find(c => c.id === activeId) || classes[0];
   const byId = {}; cls.students.forEach(s => byId[s.id] = s);
@@ -1824,8 +1800,10 @@ function App(){
     return () => clearInterval(id);
   }, [timer.running, timer.seconds]);
 
-  // sync timer length with tweak when not running
-  uE(() => { setTimer(tm => tm.running ? tm : { seconds: t.timerMinutes * 60, running:false, initial: t.timerMinutes * 60 }); }, [t.timerMinutes]);
+  // REMOVED: an effect here re-synced the timer length to TWEAK_DEFAULTS.timerMinutes on mount,
+  // the same "effect that syncs state to a constant is a no-op that only destroys" shape as the
+  // group-size effect removed below - timerMinutes never varies, so this only ever reproduced the
+  // initial useState value above.
 
   // REMOVED: an effect here forced config.value to TWEAK_DEFAULTS.defaultGroupSize on mount.
   // It was left over from the design tool's live Tweaks panel, where the number really could
@@ -1950,9 +1928,12 @@ function App(){
   };
 
   // ---- present mode + keyboard ----
-  const enterPresent = () => {
-    // commit this arrangement as a real session - unless Generate already committed this exact
-    // same arrangement a moment ago, in which case committing again would double-count every pair
+  // Commits whatever's currently on screen as a real session - unless it's the exact same
+  // arrangement already committed a moment ago (Generate then Present, or Present then Exit
+  // with no Re-shuffle in between), in which case committing again would double-count every
+  // pair. Called on BOTH entering Present and leaving it, so a Re-shuffle used mid-class (the
+  // arrangement actually taught with, not just the one first shown) still gets recorded.
+  const commitArrangement = () => {
     const priorHistory = cls.history || {};
     const sig = groupSig(groupIds);
     if (committedSig.current[cls.id] !== sig){
@@ -1961,17 +1942,18 @@ function App(){
       committedSig.current[cls.id] = sig;
     }
     setFreshBaseline(priorHistory);
-    setView('stage');
   };
+  const enterPresent = () => { commitArrangement(); setView('stage'); };
+  const exitPresent = () => { commitArrangement(); setView('work'); };
   uE(() => {
     if (view !== 'stage') return;
     const onKey = (e) => {
-      if (e.key === 'Escape') setView('work');
+      if (e.key === 'Escape') exitPresent();
       else if (e.code === 'Space'){ e.preventDefault(); regenerate(false); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, cls, config]);
+  }, [view, cls, config, groupIds]);
 
   // ---- class ops ----
   const stats = termStats(cls.history || {}, cls.students);
@@ -2044,7 +2026,7 @@ function App(){
       {view === 'stage' && (
         <Stage cls={cls} groups={groups} roles={config.roles} roleNames={cls.roleNames} pinned={cls.pinned}
           timer={timer} timerCtl={timerCtl}
-          onReshuffle={() => regenerate(false)} onExit={() => setView('work')}
+          onReshuffle={() => regenerate(false)} onExit={exitPresent}
           frozen={frozen} setFrozen={setFrozen} shuffling={shuffling}
           onEditRoles={() => setModal({ type:'roles' })} />
       )}
