@@ -115,6 +115,20 @@ function defaultClasses(){
 
 // ---- pairing-history helpers ----
 const pairKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+// Order-independent fingerprint of an arrangement (array of arrays of student ids), used to tell
+// whether the on-screen groups have already been committed into history so a second commit point
+// (Generate, then Present, on the same unchanged arrangement) doesn't double-count every pair.
+const groupSig = (idGroups) => JSON.stringify(idGroups.map(g => [...g].sort()));
+
+// Shared by every "save this to a file" button (group export, backup file) so the browser-quirk
+// object-URL-revoke workaround lives in one place instead of two copies that could drift apart.
+function downloadBlob(content, filename, mime){
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 // ---- the generator ----
 // opts: { mode:'count'|'size', value, avoidRecent, balance, history:{pairKey:count}, keepApart:[[a,b]], keepTogether:[[a,b]] }
@@ -241,7 +255,7 @@ function termStats(history, students){
   const metPairs = Object.keys(history).length;
   const unique = totalPairs ? Math.round((metPairs / totalPairs) * 100) : 0;
   const never = Math.max(0, totalPairs - metPairs);
-  return { sessions: vals.length ? vals.reduce((a, b) => Math.max(a, b), 0) : 0, unique, never };
+  return { sessions: vals.length ? vals.reduce((a, b) => Math.max(a, b), 0) : 0, unique, never, metPairs };
 }
 
 // ---- persistence ----
@@ -951,10 +965,17 @@ function Stage({ cls, groups, roles, roleNames, pinned, timer, timerCtl, onReshu
                       background: col, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
                       fontWeight:700, fontSize:'clamp(12px,1.1vw,16px)', flex:'0 0 auto' }}>
                       {s.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}</div>
-                    <span style={{ fontSize:'clamp(17px,1.9vw,26px)', fontWeight:600, letterSpacing:'-.01em', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</span>
+                    {/* Name and role stack vertically instead of sharing one row - a long role
+                        label like "Marker holder (silent scribe)" used to sit flex:0 0 auto next
+                        to the name, forcing the name itself into ellipsis on a narrow projected
+                        card. The name is the one thing that must never truncate here. */}
+                    <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:1 }}>
+                      <span style={{ fontSize:'clamp(17px,1.9vw,26px)', fontWeight:600, letterSpacing:'-.01em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.name}</span>
+                      {roles && j < RN.length && <span style={{ fontFamily:'var(--font-display)', fontSize:'clamp(9px,.85vw,12px)',
+                        fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', textTransform:'uppercase', letterSpacing:'.05em',
+                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{roleFor(j)}</span>}
+                    </div>
                     {pinned && pinned[s.id] && <Icon name="pin" size={13} fill={true} style={{ fill:col, stroke:col, flex:'0 0 auto', opacity:.9 }} />}
-                    {roles && j < RN.length && <span style={{ marginLeft:'auto', flex:'0 0 auto', fontFamily:'var(--font-display)', fontSize:'clamp(9px,.85vw,12px)',
-                      fontWeight:500, color:'color-mix(in oklab, var(--stage-ink) 45%, transparent)', textTransform:'uppercase', letterSpacing:'.05em', whiteSpace:'nowrap' }}>{roleFor(j)}</span>}
                   </div>
                 ))}
               </div>
@@ -1246,7 +1267,7 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
   const [incRoles, setIncRoles] = useStateM(!!rolesOn);
   const [incHeader, setIncHeader] = useStateM(true);
   const [copied, setCopied] = useStateM(false);
-  const RN = (roleNames && roleNames.length) ? roleNames : ['Lead','Recorder','Reporter','Materials','Timekeeper'];
+  const RN = (roleNames && roleNames.length) ? roleNames : ROLES; // same fallback Toolbar/Stage/GroupCard use
   const dateStr = new Date().toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
   const roleFor = (j) => (incRoles && j < RN.length) ? RN[j] : null;
 
@@ -1273,11 +1294,7 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
   const download = () => {
     const ext = fmt === 'table' ? 'csv' : 'txt';
     const mime = fmt === 'table' ? 'text/csv' : 'text/plain';
-    const blob = new Blob([text], { type: mime });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${cls.name.replace(/[^\w]+/g, '-')}-groups.${ext}`;
-    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(text, `${cls.name.replace(/[^\w]+/g, '-')}-groups.${ext}`, mime);
   };
   const copy = () => { navigator.clipboard && navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1400); };
   const print = () => {
@@ -1537,13 +1554,13 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
           </div>
         ) : (
           <>
-            <button className="btn focusable" disabled={pairStats.unique === 0}
-              style={pairStats.unique === 0 ? { opacity:.5, cursor:'not-allowed' } : {}}
+            <button className="btn focusable" disabled={pairStats.metPairs === 0}
+              style={pairStats.metPairs === 0 ? { opacity:.5, cursor:'not-allowed' } : {}}
               onClick={() => { setHistoryArmed(true); setErr(''); }}>
               <Icon name="undo" size={15} /> Reset pairing history
             </button>
             <div style={{ fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.55 }}>
-              {pairStats.unique === 0
+              {pairStats.metPairs === 0
                 ? <>No pairing history yet for {activeClassName}.</>
                 : <>Clears <b>{activeClassName}</b>’s “pairs met” memory for a new term, without
                    touching its roster, levels, roles, or rules.</>}
@@ -1652,6 +1669,12 @@ function App(){
   // this round's own "% new" badges, so a just-generated group isn't measured against a
   // history that already contains its own pairs (which would always read back as 0% new).
   const [freshBaseline, setFreshBaseline] = uS({});
+  // Signature of the last arrangement actually committed into history, per class - Generate and
+  // Present both commit, and clicking Present right after Generate (without changing anything)
+  // used to commit the SAME arrangement a second time, double-counting every pair in it. Nothing
+  // else changes this ref; a drag, reroll, or reshuffle naturally produces a different signature,
+  // so the next real commit still goes through.
+  const committedSig = uR({});
   const [view, setView] = uS('work');
   const [shuffling, setShuffling] = uS(false);
   const [frozen, setFrozen] = uS(false);
@@ -1738,8 +1761,8 @@ function App(){
     setActiveId(st.classes.some(c => c.id === st.activeId) ? st.activeId : st.classes[0].id);
     if (st.config) setConfig(st.config);
     if (Array.isArray(st.defaultRoles) && st.defaultRoles.length) setDefaultRoles(st.defaultRoles.slice());
-    setTeacherName(st.teacherName != null ? st.teacherName : DEFAULT_TEACHER);
-    setTerm(st.term != null ? st.term : DEFAULT_TERM);
+    setTeacherName(st.teacherName != null ? st.teacherName : defaultTeacher());
+    setTerm(st.term != null ? st.term : defaultTerm());
   };
   const addSnapshot = (name) => {
     if (snapshots.length >= SNAP_MAX) return 'Ten snapshots is the limit. Delete one first.';
@@ -1772,26 +1795,27 @@ function App(){
   const downloadBackup = () => {
     const d = new Date();
     const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    const blob = new Blob([buildBackup(currentState())], { type:'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'Grouper backup ' + stamp + '.json';
-    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(buildBackup(currentState()), 'Grouper backup ' + stamp + '.json', 'application/json');
   };
 
   // Cmd/Ctrl+S saves and shows the receipt. Without this the browser eats the shortcut with its
   // own Save Page dialog, which is exactly the wrong answer in an app that autosaves silently.
+  // The listener is attached once (empty deps) instead of on every render, but `saveNow` closes
+  // over `classes`/`config`/etc, which change on every edit - so the latest version is read from
+  // a ref each keystroke rather than baked into the listener at mount time.
+  const saveNowRef = uR(saveNow); saveNowRef.current = saveNow;
+  const viewRef = uR(view); viewRef.current = view;
   uE(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')){
         e.preventDefault();
-        saveNow();
-        if (view !== 'stage') setModal({ type:'save' });
+        saveNowRef.current();
+        if (viewRef.current !== 'stage') setModal({ type:'save' });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
+  }, []);
 
   // ---- timer tick ----
   uE(() => {
@@ -1846,8 +1870,12 @@ function App(){
     setFreshBaseline(priorHistory);
     setShuffling(true); setTimeout(() => setShuffling(false), 600);
     if (commit){
-      const h = commitHistory(g, priorHistory);
-      setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+      const sig = groupSig(g.map(arr => arr.map(s => s.id)));
+      if (committedSig.current[cls.id] !== sig){
+        const h = commitHistory(g, priorHistory);
+        setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+        committedSig.current[cls.id] = sig;
+      }
     }
   }
 
@@ -1891,14 +1919,20 @@ function App(){
     });
   };
 
-  // re-roll one group: swap two members with another group
+  // re-roll one group: swap two members with another group. Pinned ("Freeze in this group")
+  // students are excluded from the swap pool - a reroll must never move someone the teacher
+  // explicitly froze in place, the same promise a full regenerate already keeps via pinnedSeed.
   const rerollGroup = (i) => {
+    const pinnedMap = cls.pinned || {};
     setGroupIds(gs => {
       if (gs.length < 2) return gs;
       const next = gs.map(g => [...g]);
       let j = i; while (j === i) j = (Math.random() * next.length) | 0;
-      if (!next[i].length || !next[j].length) return next;
-      const ai = (Math.random() * next[i].length) | 0, bj = (Math.random() * next[j].length) | 0;
+      const iFree = next[i].map((id, idx) => [id, idx]).filter(([id]) => !pinnedMap[id]);
+      const jFree = next[j].map((id, idx) => [id, idx]).filter(([id]) => !pinnedMap[id]);
+      if (!iFree.length || !jFree.length) return next;
+      const [, ai] = iFree[(Math.random() * iFree.length) | 0];
+      const [, bj] = jFree[(Math.random() * jFree.length) | 0];
       const tmp = next[i][ai]; next[i][ai] = next[j][bj]; next[j][bj] = tmp;
       return next;
     });
@@ -1917,10 +1951,15 @@ function App(){
 
   // ---- present mode + keyboard ----
   const enterPresent = () => {
-    // commit this arrangement as a real session
+    // commit this arrangement as a real session - unless Generate already committed this exact
+    // same arrangement a moment ago, in which case committing again would double-count every pair
     const priorHistory = cls.history || {};
-    const h = commitHistory(groups, priorHistory);
-    setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+    const sig = groupSig(groupIds);
+    if (committedSig.current[cls.id] !== sig){
+      const h = commitHistory(groups, priorHistory);
+      setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+      committedSig.current[cls.id] = sig;
+    }
     setFreshBaseline(priorHistory);
     setView('stage');
   };
@@ -2027,11 +2066,25 @@ function App(){
             const pool = c.students.slice();
             const students = names.map(nm => {
               const i = pool.findIndex(s => s.name === nm);
-              return i >= 0 ? pool.splice(i, 1)[0]
-                            : { id: uid(), name: nm, present:true, level: 1 + Math.floor(Math.random()*3) };
+              // Level 2 (Core), same as every seeded student - a random 1-3 spread would be
+              // inventing a judgement about a real student the teacher hasn't made yet.
+              return i >= 0 ? pool.splice(i, 1)[0] : { id: uid(), name: nm, present:true, level:2 };
             });
-            return { ...c, students };
+            // A name typed differently than before (fixing a typo, renaming) reads as
+            // delete-old/add-new to the match above, since matching is by name. Prune anything
+            // that referenced the dropped id so it doesn't dangle: a stale pin, a keep-apart/
+            // keep-together rule that silently stops doing anything, or history entries that
+            // would otherwise inflate "% unique pairings" past what the current roster can produce.
+            const keep = new Set(students.map(s => s.id));
+            const pinned = Object.fromEntries(Object.entries(c.pinned || {}).filter(([id]) => keep.has(id)));
+            const dropPairs = (list) => (list || []).filter(([a, b]) => keep.has(a) && keep.has(b));
+            const history = Object.fromEntries(Object.entries(c.history || {})
+              .filter(([k]) => k.split('|').every(id => keep.has(id))));
+            return { ...c, students, pinned, keepApart: dropPairs(c.keepApart), keepTogether: dropPairs(c.keepTogether), history };
           }));
+          // groupIds (the on-screen arrangement) isn't touched above and can now reference a
+          // removed student or be missing a newly-added one; rebuild it from the new roster.
+          needsRegen.current = true;
           setModal(null);
         }} />
       )}
