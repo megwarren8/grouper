@@ -430,6 +430,43 @@ function Chip({ tone = 'plain', children, style }){
   return <span className="chip" style={{ background:bg, color:fg, border:`1px solid ${bd}`, ...style }}>{children}</span>;
 }
 
+const ROW_STYLE = { display:'flex', alignItems:'center', gap:10, padding:'9px 10px', borderRadius:10,
+  border:'1px solid var(--line-2)', background:'var(--surface-2)' };
+
+// SaveModal used to hand-copy this "big warning box, Cancel + confirm (+ optional third action)"
+// shape three times (loading a backup file, resetting pairing history, starting fresh) with only
+// the tone, message, and buttons differing. A fourth "confirm before this destructive thing"
+// spot - restoring a named snapshot - is deliberately NOT built on this: it's a compact inline
+// Cancel/Restore pair inside a list row, not a standalone box, because a full box per snapshot in
+// a list of up to ten would be much heavier than the one-off actions this component is for.
+function ArmedBox({ tone, style, message, extraLabel, onExtra, confirmLabel, onConfirm, onCancel }){
+  return (
+    <div style={{ ...ROW_STYLE, display:'block', borderColor:`var(--${tone})`, background:`var(--${tone}-soft)`, ...style }}>
+      <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>{message}</div>
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+        <button className="btn sm focusable" onClick={onCancel}>Cancel</button>
+        {extraLabel && <button className="btn sm focusable" onClick={onExtra}>{extraLabel}</button>}
+        <button className="btn sm primary focusable" onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    </div>
+  );
+}
+
+// The unarmed half of the same "Reset pairing history" / "Start fresh" shape: a button that arms
+// an ArmedBox, plus an explanatory note underneath.
+function ArmedTrigger({ label, disabled, note, onArm }){
+  return (
+    <>
+      <button className="btn focusable" disabled={disabled}
+        style={disabled ? { opacity:.5, cursor:'not-allowed' } : {}}
+        onClick={onArm}>
+        <Icon name="undo" size={15} /> {label}
+      </button>
+      <div style={{ fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.55 }}>{note}</div>
+    </>
+  );
+}
+
 // work.jsx - Work-view presentational components. → window.
 const { useState, useRef, useEffect } = React;
 
@@ -582,6 +619,34 @@ function TimerPill({ timer, onToggle, onAdd, onReset, big }){
 }
 
 /* ---------------- Toolbar ---------------- */
+// Roles and Balance-levels were the same two-segment composite (a toggle button plus an
+// adjoining edit-icon button sharing one colored border/background) hand-copied with different
+// colors, sizes, and content. Text spacing is built into the label string itself (rather than
+// literal JSX whitespace) so the two very different calls below - one with an icon and a Toggle
+// switch either side of the label, one with just bare text - reproduce their original DOM
+// exactly: an icon/toggle-flanked label needs the same leading/trailing space the original had,
+// a bare label must not gain one from an empty icon slot.
+function TogglePill({ active, tone, radius, gap, pad, fontSize, inactiveColor, icon, iconSize, label, showToggle,
+                       onToggle, onEdit, editTitle, editPad, editIconSize }){
+  const flanked = !!(icon || showToggle);
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:0, borderRadius:radius,
+      border:'1px solid ' + (active ? `var(--${tone})` : 'var(--line-2)'),
+      background: active ? `var(--${tone}-soft)` : 'var(--surface)',
+      color: active ? `var(--${tone})` : inactiveColor, overflow:'hidden' }}>
+      <button className="focusable" onClick={onToggle}
+        style={{ display:'flex', alignItems:'center', gap, padding:pad, fontWeight:600, fontSize, color:'inherit' }}>
+        {icon && <Icon name={icon} size={iconSize} />}{flanked ? ` ${label} ` : label}{showToggle && <Toggle on={active} />}
+      </button>
+      <button className="focusable" onClick={onEdit} title={editTitle}
+        style={{ display:'flex', alignItems:'center', padding:editPad, color:'inherit',
+          borderLeft:'1px solid ' + (active ? `var(--${tone})` : 'var(--line-2)') }}>
+        <Icon name="edit" size={editIconSize} />
+      </button>
+    </div>
+  );
+}
+
 function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, timer, timerCtl,
                    onRules, onEditRoles, onEditLevels, presentN, totalN, shuffling, onRename,
                    mobile, classes, activeId, onSelectClass, saveStatus, lastSavedAt, onOpenSave }){
@@ -612,19 +677,10 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
         </div>
         <div style={{ flex:1 }} />
         <TimerPill timer={timer} onToggle={timerCtl.toggle} onAdd={timerCtl.add} onReset={timerCtl.reset} />
-        <div style={{ display:'flex', alignItems:'center', gap:0, borderRadius:'var(--r-md)',
-          border:'1px solid ' + (config.roles ? 'var(--primary)' : 'var(--line-2)'),
-          background: config.roles ? 'var(--primary-soft)' : 'var(--surface)',
-          color: config.roles ? 'var(--primary)' : 'var(--ink)', overflow:'hidden' }}>
-          <button className="focusable" onClick={() => setConfig({ ...config, roles: !config.roles })}
-            style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', fontWeight:600, fontSize:14, color:'inherit' }}>
-            <Icon name="sparkle" size={15} /> Roles <Toggle on={config.roles} />
-          </button>
-          <button className="focusable" onClick={onEditRoles} title="Edit role names"
-            style={{ display:'flex', alignItems:'center', padding:'10px 11px', color:'inherit', borderLeft:'1px solid ' + (config.roles ? 'var(--primary)' : 'var(--line-2)') }}>
-            <Icon name="edit" size={15} />
-          </button>
-        </div>
+        <TogglePill active={config.roles} tone="primary" radius="var(--r-md)" gap={8} pad="10px 12px" fontSize={14}
+          inactiveColor="var(--ink)" icon="sparkle" iconSize={15} label="Roles" showToggle={true}
+          onToggle={() => setConfig({ ...config, roles: !config.roles })}
+          onEdit={onEditRoles} editTitle="Edit role names" editPad="10px 11px" editIconSize={15} />
         <button className="btn focusable" onClick={onGenerate}>
           <Icon name="shuffle" size={15} style={shuffling ? { animation:'spin .6s ease' } : null} /> Generate
         </button>
@@ -651,20 +707,10 @@ function Toolbar({ cls, config, setConfig, onGenerate, onPresent, onExport, time
             color: config.avoidRecent ? 'var(--primary)' : 'var(--muted)' }}>
           <Icon name="shuffle" size={14} /> Avoid recent partners <Toggle on={config.avoidRecent} />
         </button>
-        <div style={{ display:'flex', alignItems:'center', gap:0, borderRadius:999,
-          border:'1px solid ' + (config.balance ? 'var(--good)' : 'var(--line-2)'),
-          background: config.balance ? 'var(--good-soft)' : 'var(--surface)',
-          color: config.balance ? 'var(--good)' : 'var(--muted)', overflow:'hidden' }}>
-          <button className="focusable" onClick={() => setConfig({ ...config, balance: !config.balance })}
-            style={{ cursor:'pointer', padding:'7px 6px 7px 11px', fontSize:11.5, fontWeight:600, color:'inherit' }}>
-            Balance levels
-          </button>
-          <button className="focusable" onClick={onEditLevels} title="Set student levels"
-            style={{ display:'flex', alignItems:'center', padding:'7px 9px', color:'inherit',
-              borderLeft:'1px solid ' + (config.balance ? 'var(--good)' : 'var(--line-2)') }}>
-            <Icon name="edit" size={12} />
-          </button>
-        </div>
+        <TogglePill active={config.balance} tone="good" radius={999} gap={0} pad="7px 6px 7px 11px" fontSize={11.5}
+          inactiveColor="var(--muted)" icon={null} iconSize={0} label="Balance levels" showToggle={false}
+          onToggle={() => setConfig({ ...config, balance: !config.balance })}
+          onEdit={onEditLevels} editTitle="Set student levels" editPad="7px 9px" editIconSize={12} />
         <button className="chip focusable" onClick={onRules}
           style={{ cursor:'pointer', padding:'7px 11px', background:'var(--surface)',
             border:'1px solid var(--line-2)', color: (cls.keepApart?.length || cls.keepTogether?.length) ? 'var(--ink)' : 'var(--muted)' }}>
@@ -706,6 +752,22 @@ function SaveIndicator({ status, at, onClick }){
 // work2.jsx - Roster panel, Groups grid (drag & drop), Insight bar. → window.
 
 /* ---------------- Roster ---------------- */
+// Present/absent rows below differ in draggability, avatar tint, name strikethrough, and whether
+// a drag-grip icon trails the row - genuinely different renders for a genuinely different state,
+// not copy-paste drift, so they stay as two separate blocks rather than one over-parameterized
+// component. Only the checkbox itself is a clean checked/unchecked toggle worth sharing.
+function RosterCheckbox({ checked, onClick }){
+  const style = checked
+    ? { width:18, height:18, borderRadius:6, flex:'0 0 auto', border:'1.5px solid var(--primary)',
+        background:'var(--primary)', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center' }
+    : { width:18, height:18, borderRadius:6, flex:'0 0 auto', border:'1.5px solid var(--line-2)', background:'transparent' };
+  return (
+    <button className="focusable" onClick={onClick} style={style}>
+      {checked && <Icon name="check" size={12} stroke={3} />}
+    </button>
+  );
+}
+
 function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEnd, onDropRoster, rosterHot, setRosterHot, mobile, collapsed, onToggleCollapse }){
   const present = students.filter(s => s.present);
   const absent = students.filter(s => !s.present);
@@ -754,12 +816,7 @@ function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEn
             onDragEnd={onDragEnd}
             style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 8px', borderRadius:9,
               cursor:'grab', opacity: dragId === s.id ? .35 : 1 }}>
-            <button className="focusable" onClick={() => onToggle(s.id)}
-              style={{ width:18, height:18, borderRadius:6, flex:'0 0 auto',
-                border:'1.5px solid var(--primary)', background:'var(--primary)', color:'#fff',
-                display:'flex', alignItems:'center', justifyContent:'center' }}>
-              <Icon name="check" size={12} stroke={3} />
-            </button>
+            <RosterCheckbox checked={true} onClick={() => onToggle(s.id)} />
             <Avatar name={s.name} size={24} />
             <span style={{ fontSize:13.5, fontWeight:500, flex:1 }}>{s.name}</span>
             <Icon name="grip" size={15} style={{ color:'var(--line-2)' }} />
@@ -771,8 +828,7 @@ function RosterPanel({ students, onToggle, onEdit, dragId, onDragStart, onDragEn
         )}
         {absent.map(s => (
           <div key={s.id} className="srow" style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 8px', borderRadius:9, opacity:.5 }}>
-            <button className="focusable" onClick={() => onToggle(s.id)}
-              style={{ width:18, height:18, borderRadius:6, flex:'0 0 auto', border:'1.5px solid var(--line-2)', background:'transparent' }} />
+            <RosterCheckbox checked={false} onClick={() => onToggle(s.id)} />
             <Avatar name={s.name} size={24} solid="var(--surface-2)" />
             <span style={{ fontSize:13.5, fontWeight:500, flex:1, textDecoration:'line-through' }}>{s.name}</span>
           </div>
@@ -1129,56 +1185,55 @@ function DeleteClassModal({ cls, onConfirm, onClose }){
   );
 }
 
-function RulesModal({ cls, onChange, onClose }){
-  const [a1, setA1] = useStateM(''); const [a2, setA2] = useStateM('');
-  const [t1, setT1] = useStateM(''); const [t2, setT2] = useStateM('');
-  const apart = cls.keepApart || [], together = cls.keepTogether || [];
-  const nameOf = (id) => (cls.students.find(s => s.id === id) || {}).name || '?';
-
-  const addApart = () => { if (a1 && a2 && a1 !== a2) { onChange({ keepApart:[...apart, [a1, a2]] }); setA1(''); setA2(''); } };
-  const addTog   = () => { if (t1 && t2 && t1 !== t2) { onChange({ keepTogether:[...together, [t1, t2]] }); setT1(''); setT2(''); } };
-  const rmApart  = (i) => onChange({ keepApart: apart.filter((_, k) => k !== i) });
-  const rmTog    = (i) => onChange({ keepTogether: together.filter((_, k) => k !== i) });
-
+// One "add/remove constraint pairs" section - Keep apart and Keep together in RulesModal were
+// near-identical copy-paste, differing only in color tone, the connective symbol, and which
+// state/handler pair they were wired to. The pending two-select values are local to the section
+// itself (nothing outside ever reads them), so they live here instead of as four separately named
+// states in the parent.
+function PairRuleSection({ label, tone, symbol, pairs, onAdd, onRemove, students, nameOf, gapAfter }){
+  const [v1, setV1] = useStateM(''); const [v2, setV2] = useStateM('');
   const sel = (val, set) => (
     <select value={val} onChange={(e) => set(e.target.value)} style={{ ...inputStyle, flex:1, padding:'9px 10px' }}>
       <option value="">Choose…</option>
-      {cls.students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+      {students.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
     </select>
   );
+  const add = () => { if (v1 && v2 && v1 !== v2) { onAdd(v1, v2); setV1(''); setV2(''); } };
+  return (
+    <>
+      <div style={{ fontSize:12.5, fontWeight:700, color:`var(--${tone})`, marginBottom:8 }}>{label}</div>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:10 }}>
+        {pairs.length === 0 && <span style={{ fontSize:12.5, color:'var(--muted)' }}>No pairs yet.</span>}
+        {pairs.map(([a, b], i) => (
+          <Chip key={i} tone={tone} style={{ padding:'6px 6px 6px 10px' }}>
+            {nameOf(a)} {symbol} {nameOf(b)}
+            <button onClick={() => onRemove(i)} style={{ display:'flex', color:'inherit', opacity:.7 }}><Icon name="x" size={13} /></button>
+          </Chip>
+        ))}
+      </div>
+      <div style={{ display:'flex', gap:8, marginBottom: gapAfter }}>
+        {sel(v1, setV1)}<span style={{ alignSelf:'center', color:'var(--muted)' }}>{symbol}</span>{sel(v2, setV2)}
+        <button className="btn sm focusable" onClick={add}><Icon name="plus" size={14} /> Add</button>
+      </div>
+    </>
+  );
+}
+
+function RulesModal({ cls, onChange, onClose }){
+  const apart = cls.keepApart || [], together = cls.keepTogether || [];
+  const nameOf = (id) => (cls.students.find(s => s.id === id) || {}).name || '?';
 
   return (
     <Modal title="Grouping rules" sub="Constraints the generator always respects." onClose={onClose} width={500}
       footer={<button className="btn primary focusable" onClick={onClose}>Done</button>}>
-      <div style={{ fontSize:12.5, fontWeight:700, color:'var(--warn)', marginBottom:8 }}>⊘ Keep apart</div>
-      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:10 }}>
-        {apart.length === 0 && <span style={{ fontSize:12.5, color:'var(--muted)' }}>No pairs yet.</span>}
-        {apart.map(([a, b], i) => (
-          <span key={i} className="chip" style={{ background:'var(--warn-soft)', color:'var(--warn)', padding:'6px 6px 6px 10px' }}>
-            {nameOf(a)} ✕ {nameOf(b)}
-            <button onClick={() => rmApart(i)} style={{ display:'flex', color:'inherit', opacity:.7 }}><Icon name="x" size={13} /></button>
-          </span>
-        ))}
-      </div>
-      <div style={{ display:'flex', gap:8, marginBottom:22 }}>
-        {sel(a1, setA1)}<span style={{ alignSelf:'center', color:'var(--muted)' }}>✕</span>{sel(a2, setA2)}
-        <button className="btn sm focusable" onClick={addApart}><Icon name="plus" size={14} /> Add</button>
-      </div>
-
-      <div style={{ fontSize:12.5, fontWeight:700, color:'var(--good)', marginBottom:8 }}>＋ Keep together</div>
-      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:10 }}>
-        {together.length === 0 && <span style={{ fontSize:12.5, color:'var(--muted)' }}>No pairs yet.</span>}
-        {together.map(([a, b], i) => (
-          <span key={i} className="chip" style={{ background:'var(--good-soft)', color:'var(--good)', padding:'6px 6px 6px 10px' }}>
-            {nameOf(a)} + {nameOf(b)}
-            <button onClick={() => rmTog(i)} style={{ display:'flex', color:'inherit', opacity:.7 }}><Icon name="x" size={13} /></button>
-          </span>
-        ))}
-      </div>
-      <div style={{ display:'flex', gap:8 }}>
-        {sel(t1, setT1)}<span style={{ alignSelf:'center', color:'var(--muted)' }}>+</span>{sel(t2, setT2)}
-        <button className="btn sm focusable" onClick={addTog}><Icon name="plus" size={14} /> Add</button>
-      </div>
+      <PairRuleSection label="⊘ Keep apart" tone="warn" symbol="✕" pairs={apart} students={cls.students} nameOf={nameOf}
+        gapAfter={22}
+        onAdd={(a, b) => onChange({ keepApart:[...apart, [a, b]] })}
+        onRemove={(i) => onChange({ keepApart: apart.filter((_, k) => k !== i) })} />
+      <PairRuleSection label="＋ Keep together" tone="good" symbol="+" pairs={together} students={cls.students} nameOf={nameOf}
+        gapAfter={0}
+        onAdd={(a, b) => onChange({ keepTogether:[...together, [a, b]] })}
+        onRemove={(i) => onChange({ keepTogether: together.filter((_, k) => k !== i) })} />
     </Modal>
   );
 }
@@ -1402,16 +1457,13 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
     else fail(res || 'This browser refused to store the snapshot (storage is probably full). Save to a file instead.');
   };
 
-  const rowStyle = { display:'flex', alignItems:'center', gap:10, padding:'9px 10px', borderRadius:10,
-    border:'1px solid var(--line-2)', background:'var(--surface-2)' };
-
   return (
     <Modal title="Saving & backups" sub={summary} onClose={onClose} width={540}
       footer={<button className="btn primary focusable" onClick={onClose}>Done</button>}>
 
       {/* 1. this browser */}
       <Label style={{ marginBottom:7 }}>This browser</Label>
-      <div style={{ ...rowStyle, marginBottom:6 }}>
+      <div style={{ ...ROW_STYLE, marginBottom:6 }}>
         <span style={{ width:8, height:8, borderRadius:'50%', flex:'0 0 auto',
           background: status === 'error' ? 'var(--warn)' : 'var(--good)' }} />
         <span style={{ fontSize:13, flex:1, minWidth:0 }}>
@@ -1448,31 +1500,26 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
       </div>
 
       {err && (
-        <div style={{ ...rowStyle, marginBottom:18, borderColor:'var(--warn)', background:'var(--warn-soft)', alignItems:'flex-start' }}>
+        <div style={{ ...ROW_STYLE, marginBottom:18, borderColor:'var(--warn)', background:'var(--warn-soft)', alignItems:'flex-start' }}>
           <span style={{ fontSize:13, color:'var(--warn)', lineHeight:1.5 }}>{err}</span>
         </div>
       )}
 
       {pending && (
-        <div style={{ ...rowStyle, marginBottom:18, display:'block', borderColor:'var(--primary)', background:'var(--primary-soft)' }}>
-          <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>
+        <ArmedBox tone="primary" style={{ marginBottom:18 }}
+          message={<>
             <b>{pending.name}</b> holds {stateSummary(pending.state)}.<br />
             Loading it replaces everything currently in this browser ({summary}). That cannot be undone.
-          </div>
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-            <button className="btn sm focusable" onClick={() => { setPending(null); setErr(''); }}>Cancel</button>
-            <button className="btn sm focusable" onClick={() => {
-              const r = onAddSnapshot('Before loading ' + pending.name);
-              r === true ? say('Snapshot of the current setup taken.')
-                         : fail(r || 'Could not store a snapshot first. Use Save to file instead, then load.');
-            }}>
-              Snapshot current first
-            </button>
-            <button className="btn sm primary focusable" onClick={() => { onRestoreState(pending.state); setPending(null); onClose(); }}>
-              Replace everything
-            </button>
-          </div>
-        </div>
+          </>}
+          onCancel={() => { setPending(null); setErr(''); }}
+          extraLabel="Snapshot current first"
+          onExtra={() => {
+            const r = onAddSnapshot('Before loading ' + pending.name);
+            r === true ? say('Snapshot of the current setup taken.')
+                       : fail(r || 'Could not store a snapshot first. Use Save to file instead, then load.');
+          }}
+          confirmLabel="Replace everything"
+          onConfirm={() => { onRestoreState(pending.state); setPending(null); onClose(); }} />
       )}
 
       {/* 3. snapshots */}
@@ -1501,7 +1548,7 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
       ) : (
         <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
           {snapshots.map(s => (
-            <div key={s.id} style={{ ...rowStyle, flexWrap:'wrap', rowGap:8 }}>
+            <div key={s.id} style={{ ...ROW_STYLE, flexWrap:'wrap', rowGap:8 }}>
               <div style={{ flex:1, minWidth:150 }}>
                 <div style={{ fontSize:13.5, fontWeight:600 }}>{s.name}</div>
                 <div style={{ fontSize:11.5, color:'var(--muted)' }}>{stampStr(s.savedAt)} · {stateSummary(s.state)}</div>
@@ -1538,35 +1585,26 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
       <div style={{ borderTop:'1px solid var(--line)', margin:'18px 0 0', paddingTop:16 }}>
         <Label style={{ marginBottom:7 }}>Reset pairing history</Label>
         {historyArmed ? (
-          <div style={{ ...rowStyle, display:'block', borderColor:'var(--warn)', background:'var(--warn-soft)' }}>
-            <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>
+          <ArmedBox tone="warn"
+            message={<>
               This clears <b>{activeClassName}</b>’s pairing memory only: {pairStats.unique}% unique
               pairings this term goes back to 0%, and {pairStats.never} pairs never grouped resets to
               everyone. Roster, levels, roles, and rules are untouched, and other classes are not
               affected.
-            </div>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              <button className="btn sm focusable" onClick={() => setHistoryArmed(false)}>Cancel</button>
-              <button className="btn sm primary focusable" onClick={() => {
-                onResetHistory(); setHistoryArmed(false);
-                say('Pairing history cleared for ' + activeClassName + '.');
-              }}>Clear pairing history</button>
-            </div>
-          </div>
+            </>}
+            onCancel={() => setHistoryArmed(false)}
+            confirmLabel="Clear pairing history"
+            onConfirm={() => {
+              onResetHistory(); setHistoryArmed(false);
+              say('Pairing history cleared for ' + activeClassName + '.');
+            }} />
         ) : (
-          <>
-            <button className="btn focusable" disabled={pairStats.metPairs === 0}
-              style={pairStats.metPairs === 0 ? { opacity:.5, cursor:'not-allowed' } : {}}
-              onClick={() => { setHistoryArmed(true); setErr(''); }}>
-              <Icon name="undo" size={15} /> Reset pairing history
-            </button>
-            <div style={{ fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.55 }}>
-              {pairStats.metPairs === 0
-                ? <>No pairing history yet for {activeClassName}.</>
-                : <>Clears <b>{activeClassName}</b>’s “pairs met” memory for a new term, without
-                   touching its roster, levels, roles, or rules.</>}
-            </div>
-          </>
+          <ArmedTrigger label="Reset pairing history" disabled={pairStats.metPairs === 0}
+            onArm={() => { setHistoryArmed(true); setErr(''); }}
+            note={pairStats.metPairs === 0
+              ? <>No pairing history yet for {activeClassName}.</>
+              : <>Clears <b>{activeClassName}</b>’s “pairs met” memory for a new term, without
+                 touching its roster, levels, roles, or rules.</>} />
         )}
       </div>
 
@@ -1574,34 +1612,24 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
       <div style={{ borderTop:'1px solid var(--line)', margin:'18px 0 0', paddingTop:16 }}>
         <Label style={{ marginBottom:7 }}>Start fresh</Label>
         {freshArmed ? (
-          <div style={{ ...rowStyle, display:'block', borderColor:'var(--warn)', background:'var(--warn-soft)' }}>
-            <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>
+          <ArmedBox tone="warn"
+            message={<>
               This replaces everything in this browser ({summary}) with the built-in classes:
               Block A · Trig (Honors), Block B · Trig, and Block D · Discrete, with placeholder
               rosters.<br />
               {snapshots.length > 0
                 ? <>Your {snapshots.length === 1 ? 'snapshot is' : snapshots.length + ' snapshots are'} kept, so you can step back.</>
                 : <>You have no snapshots, so save to a file first if you want a way back.</>}
-            </div>
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-              <button className="btn sm focusable" onClick={() => setFreshArmed(false)}>Cancel</button>
-              <button className="btn sm focusable" onClick={() => { onDownload(); say('Backup downloaded first.'); }}>
-                <Icon name="download" size={14} /> Save to file first
-              </button>
-              <button className="btn sm primary focusable"
-                onClick={() => { onStartFresh(); setFreshArmed(false); onClose(); }}>Reset to defaults</button>
-            </div>
-          </div>
+            </>}
+            onCancel={() => setFreshArmed(false)}
+            extraLabel={<><Icon name="download" size={14} /> Save to file first</>}
+            onExtra={() => { onDownload(); say('Backup downloaded first.'); }}
+            confirmLabel="Reset to defaults"
+            onConfirm={() => { onStartFresh(); setFreshArmed(false); onClose(); }} />
         ) : (
-          <>
-            <button className="btn focusable" onClick={() => { setFreshArmed(true); setErr(''); }}>
-              <Icon name="undo" size={15} /> Start fresh
-            </button>
-            <div style={{ fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.55 }}>
-              Clears this browser back to the built-in classes. Use it at the start of a term, or to
-              pick up defaults that changed since you first opened Grouper.
-            </div>
-          </>
+          <ArmedTrigger label="Start fresh" onArm={() => { setFreshArmed(true); setErr(''); }}
+            note={<>Clears this browser back to the built-in classes. Use it at the start of a term, or to
+              pick up defaults that changed since you first opened Grouper.</>} />
         )}
       </div>
 
