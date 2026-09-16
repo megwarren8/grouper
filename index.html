@@ -1350,8 +1350,10 @@ function ExportModal({ cls, groups, roleNames, rolesOn, onClose }){
    Restores are two-step (arm, then confirm) rather than window.confirm, so the thing being
    replaced is named on screen while you decide. */
 function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreState,
-                     onAddSnapshot, onDeleteSnapshot, onStartFresh, summary, onClose }){
+                     onAddSnapshot, onDeleteSnapshot, onStartFresh, summary, onClose,
+                     activeClassName, pairStats, onResetHistory }){
   const [snapName, setSnapName] = useStateM('');
+  const [historyArmed, setHistoryArmed] = useStateM(false);
   const [armed, setArmed] = useStateM(null);      // id of the snapshot awaiting confirm
   const [pending, setPending] = useStateM(null);  // state parsed from a file, awaiting confirm
   const [freshArmed, setFreshArmed] = useStateM(false);
@@ -1513,7 +1515,44 @@ function SaveModal({ status, at, snapshots, onSaveNow, onDownload, onRestoreStat
         Snapshots live in this browser too, so they undo your edits, not a lost browser.
       </div>
 
-      {/* 4. start fresh - the only destructive control, kept next to the backup tools on purpose */}
+      {/* 4. reset pairing history - lighter than Start fresh: only clears "who's been grouped
+          with whom" for the active class, keeps the roster/levels/roles/rules exactly as-is */}
+      <div style={{ borderTop:'1px solid var(--line)', margin:'18px 0 0', paddingTop:16 }}>
+        <Label style={{ marginBottom:7 }}>Reset pairing history</Label>
+        {historyArmed ? (
+          <div style={{ ...rowStyle, display:'block', borderColor:'var(--warn)', background:'var(--warn-soft)' }}>
+            <div style={{ fontSize:13, lineHeight:1.55, marginBottom:9 }}>
+              This clears <b>{activeClassName}</b>’s pairing memory only: {pairStats.unique}% unique
+              pairings this term goes back to 0%, and {pairStats.never} pairs never grouped resets to
+              everyone. Roster, levels, roles, and rules are untouched, and other classes are not
+              affected.
+            </div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <button className="btn sm focusable" onClick={() => setHistoryArmed(false)}>Cancel</button>
+              <button className="btn sm primary focusable" onClick={() => {
+                onResetHistory(); setHistoryArmed(false);
+                say('Pairing history cleared for ' + activeClassName + '.');
+              }}>Clear pairing history</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <button className="btn focusable" disabled={pairStats.unique === 0}
+              style={pairStats.unique === 0 ? { opacity:.5, cursor:'not-allowed' } : {}}
+              onClick={() => { setHistoryArmed(true); setErr(''); }}>
+              <Icon name="undo" size={15} /> Reset pairing history
+            </button>
+            <div style={{ fontSize:12, color:'var(--muted)', marginTop:8, lineHeight:1.55 }}>
+              {pairStats.unique === 0
+                ? <>No pairing history yet for {activeClassName}.</>
+                : <>Clears <b>{activeClassName}</b>’s “pairs met” memory for a new term, without
+                   touching its roster, levels, roles, or rules.</>}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* 5. start fresh - the only destructive control, kept next to the backup tools on purpose */}
       <div style={{ borderTop:'1px solid var(--line)', margin:'18px 0 0', paddingTop:16 }}>
         <Label style={{ marginBottom:7 }}>Start fresh</Label>
         {freshArmed ? (
@@ -1609,6 +1648,10 @@ function App(){
   const [config, setConfig] = uS(() => (init.current && init.current.config) || defaultConfig());
   const [defaultRoles, setDefaultRoles] = uS(() => (init.current && Array.isArray(init.current.defaultRoles) && init.current.defaultRoles.length) ? init.current.defaultRoles.slice() : defaultRoleNames());
   const [groupIds, setGroupIds] = uS([]);
+  // History as it stood BEFORE the on-screen arrangement was committed - used only to score
+  // this round's own "% new" badges, so a just-generated group isn't measured against a
+  // history that already contains its own pairs (which would always read back as 0% new).
+  const [freshBaseline, setFreshBaseline] = uS({});
   const [view, setView] = uS('work');
   const [shuffling, setShuffling] = uS(false);
   const [frozen, setFrozen] = uS(false);
@@ -1718,6 +1761,14 @@ function App(){
     applyState({ classes: cs, activeId: cs[0].id, config: defaultConfig(),
       defaultRoles: defaultRoleNames(), teacherName: defaultTeacher(), term: defaultTerm() });
   };
+  // Lighter than Start fresh: clears only the active class's "who has been grouped with whom"
+  // memory (a new term/trimester with the same roster), leaving students, levels, roles, and
+  // rules exactly as they are. Start fresh was the only reset in the app and it throws all of
+  // that away too, which is not what "reset the pairing count" means.
+  const resetClassHistory = () => {
+    setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:{} } : c));
+    setFreshBaseline({});
+  };
   const downloadBackup = () => {
     const d = new Date();
     const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1783,17 +1834,19 @@ function App(){
     const pinnedSeed = groupIds.map(g => g.filter(id => pinnedMap[id] && byId[id] && byId[id].present).map(id => byId[id]));
     const presentStudents = cls.students.filter(s => s.present);
     const levelTarget = presentStudents.length ? presentStudents.reduce((a, s) => a + s.level, 0) / presentStudents.length : 2;
+    const priorHistory = cls.history || {};
     const g = generateGroups(cls.students, {
       mode: config.mode, value: config.value, avoidRecent: config.avoidRecent, balance: config.balance,
       levelTarget,
-      history: cls.history || {}, keepApart: cls.keepApart || [], keepTogether: cls.keepTogether || [],
+      history: priorHistory, keepApart: cls.keepApart || [], keepTogether: cls.keepTogether || [],
       pinnedSeed,
     });
     setGroupIds(g.map(arr => arr.map(s => s.id)));
-    setNote(computeNote(g, cls.history || {}));
+    setNote(computeNote(g, priorHistory));
+    setFreshBaseline(priorHistory);
     setShuffling(true); setTimeout(() => setShuffling(false), 600);
     if (commit){
-      const h = commitHistory(g, cls.history || {});
+      const h = commitHistory(g, priorHistory);
       setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
     }
   }
@@ -1865,8 +1918,10 @@ function App(){
   // ---- present mode + keyboard ----
   const enterPresent = () => {
     // commit this arrangement as a real session
-    const h = commitHistory(groups, cls.history || {});
+    const priorHistory = cls.history || {};
+    const h = commitHistory(groups, priorHistory);
     setClasses(cs => cs.map(c => c.id === cls.id ? { ...c, history:h } : c));
+    setFreshBaseline(priorHistory);
     setView('stage');
   };
   uE(() => {
@@ -1894,7 +1949,7 @@ function App(){
   );
   const groupsEl = (
     <GroupsGrid groups={groups} roles={config.roles} roleNames={cls.roleNames} pinned={cls.pinned}
-      history={cls.history || {}} dragState={dragState} colsMax={mobile ? 1 : null} shuffling={shuffling} {...dh} />
+      history={freshBaseline} dragState={dragState} colsMax={mobile ? 1 : null} shuffling={shuffling} {...dh} />
   );
 
   return (
@@ -2032,6 +2087,7 @@ function App(){
         <SaveModal status={saveStatus} at={lastSavedAt} snapshots={snapshots} summary={stateSummary({ classes })}
           onSaveNow={saveNow} onDownload={downloadBackup} onRestoreState={applyState}
           onAddSnapshot={addSnapshot} onDeleteSnapshot={deleteSnapshot} onStartFresh={startFresh}
+          activeClassName={cls.name} pairStats={stats} onResetHistory={resetClassHistory}
           onClose={() => setModal(null)} />
       )}
     </div>
